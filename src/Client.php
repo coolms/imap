@@ -353,6 +353,51 @@ final class Client
         }
     }
 
+    /**
+     * IDLE in pieces, for a Watch that waits on several clients at once (CoolMS\Imap\Watch): begin, then each
+     * response as the Watch reads it, then end. Ending reads the IDLE's completion; a NO or BAD is a CommandFailed.
+     */
+    public function beginIdle(): void
+    {
+        $this->selectedOnly();
+        if (!$this->capabilities->has(Capability::Idle)) {
+            throw new LogicException('The server has no IDLE.');
+        }
+        $refused = $this->connection()->beginIdle();
+        if (null !== $refused) {
+            throw new CommandFailed('IDLE', $refused->completion);
+        }
+    }
+
+    /** The next response while idling; it blocks until one comes -- a Watch asks only when one is there. */
+    public function idleNext(): Response
+    {
+        return $this->connection()->idleNext();
+    }
+
+    /** @return list<Response> what came between the last response read and the IDLE's completion */
+    public function endIdle(): array
+    {
+        $reply = $this->connection()->endIdle();
+        if (!$reply->ok()) {
+            throw new CommandFailed('IDLE', $reply->completion);
+        }
+
+        return $reply->untagged;
+    }
+
+    /** Whether a response is already read off the socket and waiting in PHP's buffer (see Connection::buffered()). */
+    public function buffered(): bool
+    {
+        return $this->connection()->buffered();
+    }
+
+    /** @return resource the connection's stream, for a Watch to poll */
+    public function stream(): mixed
+    {
+        return $this->connection()->stream();
+    }
+
     public function selected(): ?SelectedFolder
     {
         return $this->selected;

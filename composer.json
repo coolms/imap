@@ -1,6 +1,6 @@
 {
     "name": "coolms/imap",
-    "description": "An IMAP client for PHP that keeps mail in sync: CONDSTORE, QRESYNC, IDLE, SPECIAL-USE folders and MOVE, with TLS verified and nothing ever deleted. Zero dependencies.",
+    "description": "An IMAP client for PHP that keeps mail in sync: CONDSTORE, QRESYNC, IDLE, SPECIAL-USE folders and MOVE, with TLS verified and nothing ever deleted. Symfony polyfills only, no framework.",
     "type": "library",
     "license": "MIT",
     "keywords": ["imap", "email", "mail", "condstore", "qresync", "idle", "xoauth2", "sasl"],
@@ -17,7 +17,9 @@
     "require": {
         "php": "^8.5",
         "ext-ctype": "*",
-        "ext-openssl": "*"
+        "ext-openssl": "*",
+        "symfony/polyfill-io-poll": "^1.43",
+        "symfony/polyfill-time": "^1.42"
     },
     "require-dev": {
         "phpunit/phpunit": "^12.5"

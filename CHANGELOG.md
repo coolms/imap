@@ -5,6 +5,22 @@ All notable changes to `coolms/imap` are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/). Before 1.0.0, a minor version may break the API.
 
+## Unreleased
+
+### Added
+
+- `Watch`: several clients IDLE at once, each on its own selected folder, with one wait for all of them. Before it
+  polls, it reads what PHP already holds for each connection: a TLS record can carry two responses, and once the first
+  is read the second waits in PHP's buffer, where a poll() on the socket never sees it. A client whose connection fails
+  is dropped from the watch and named in `failures()`; the others go on.
+- `Client::beginIdle()`, `idleNext()`, `endIdle()`, `buffered()` and `stream()`: IDLE in pieces, for `Watch`.
+- `Transport\Poller` and `Transport\IoPoller` (`Io\Poll`): the wait `Watch` makes, and the seam a test replaces.
+
+### Changed
+
+- Two runtime dependencies: `symfony/polyfill-io-poll` and `symfony/polyfill-time` (`Io\Poll` and `Time\Duration`,
+  both in PHP 8.6 core). The library takes Symfony components, never a framework.
+
 ## 0.1.0-alpha.2
 
 ### Changed (breaking)
