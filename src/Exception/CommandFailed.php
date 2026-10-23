@@ -5,10 +5,10 @@ declare(strict_types=1);
 namespace CoolMS\Imap\Exception;
 
 use CoolMS\Imap\Protocol\Response;
+use CoolMS\Imap\Protocol\ResponseCode;
 use RuntimeException;
 
 use function sprintf;
-use function strtoupper;
 
 /**
  * A command the server answered NO or BAD. The message names the command in its log form -- no secret, no literal's
@@ -21,11 +21,15 @@ final class CommandFailed extends RuntimeException
         parent::__construct(sprintf('%s: %s %s', $command, (string) $completion->status, $completion->text));
     }
 
-    /** The response code's name, upper-cased; null when the server gave none. */
+    /** The response code's name, upper-cased, known or not; null when the server gave none. */
     public function code(): ?string
     {
-        $items = $this->completion->code?->items() ?? [];
+        return $this->completion->codeName();
+    }
 
-        return [] === $items ? null : strtoupper($items[0]->string());
+    /** The response code when this library knows it -- [NONEXISTENT], [AUTHENTICATIONFAILED]; else null. */
+    public function knownCode(): ?ResponseCode
+    {
+        return $this->completion->knownCode();
     }
 }

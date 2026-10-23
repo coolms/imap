@@ -6,10 +6,12 @@ namespace CoolMS\Imap\Tests\Unit;
 
 use CoolMS\Imap\Client;
 use CoolMS\Imap\Exception\CommandFailed;
+use CoolMS\Imap\Protocol\ResponseCode;
 use CoolMS\Imap\Sasl\XOAuth2;
 use CoolMS\Imap\Transport\Endpoint;
 use CoolMS\Imap\Transport\Opener;
 use CoolMS\Imap\Transport\Security;
+use CoolMS\Imap\Value\Capability;
 use CoolMS\Imap\Value\FolderName;
 use CoolMS\Imap\Value\SpecialUse;
 use LogicException;
@@ -141,9 +143,19 @@ final class ClientTest extends TestCase
     {
         $client = $this->signedIn('ENABLE CONDSTORE', "* ENABLED CONDSTORE\r\na2 OK\r\n");
 
-        self::assertSame(['CONDSTORE'], $client->enable('CONDSTORE', 'QRESYNC'));
-        self::assertTrue($client->enabled('condstore'));
+        self::assertSame([Capability::Condstore], $client->enable(Capability::Condstore, Capability::Qresync));
+        self::assertTrue($client->enabled(Capability::Condstore));
+        self::assertFalse($client->enabled(Capability::Qresync));
         self::assertStringEndsWith("a2 ENABLE CONDSTORE\r\n", $this->written(), 'QRESYNC, not offered, not asked');
+    }
+
+    #[Test]
+    public function anEnabledNameNotAskedForOrNotKnownIsPassedOverNeverAnError(): void
+    {
+        $client = $this->signedIn('ENABLE CONDSTORE UTF8=ACCEPT', "* ENABLED utf8=accept X-VENDOR-THING METADATA\r\na2 OK\r\n");
+
+        self::assertSame([Capability::Utf8Accept], $client->enable(Capability::Utf8Accept, Capability::Condstore));
+        self::assertFalse($client->enabled(Capability::Condstore), 'asked, offered, but the server did not say ENABLED');
     }
 
     #[Test]
@@ -151,7 +163,7 @@ final class ClientTest extends TestCase
     {
         $client = $this->signedIn('ENABLE', '');
 
-        self::assertSame([], $client->enable('QRESYNC'));
+        self::assertSame([], $client->enable(Capability::Qresync));
         self::assertSame("a1 LOGIN \"me\" \"pw\"\r\n", $this->written());
     }
 
@@ -179,6 +191,7 @@ final class ClientTest extends TestCase
             self::fail('a folder that is not there is never selected');
         } catch (CommandFailed $failed) {
             self::assertSame('NONEXISTENT', $failed->code());
+            self::assertSame(ResponseCode::Nonexistent, $failed->knownCode());
             self::assertSame('EXAMINE "Gone": NO Unknown', $failed->getMessage());
             self::assertNull($client->selected(), 'a failed SELECT leaves nothing selected (RFC 9051 s.6.3.2)');
         }

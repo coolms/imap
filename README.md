@@ -30,12 +30,14 @@ composer require coolms/imap
 use CoolMS\Imap\Client;
 use CoolMS\Imap\Transport\Endpoint;
 use CoolMS\Imap\Transport\Security;
+use CoolMS\Imap\Value\Capability;
+use CoolMS\Imap\Value\FetchItem;
 use CoolMS\Imap\Value\FolderName;
 use CoolMS\Imap\Value\UidSet;
 
 $imap = Client::open(new Endpoint('imap.example.com', 993, Security::Tls));
 $imap->login('me@example.com', $password);
-$imap->enable('CONDSTORE', 'QRESYNC');
+$imap->enable(Capability::Condstore, Capability::Qresync);
 
 foreach ($imap->folders() as $folder) {
     echo $folder->name->display, ' ', $folder->role?->value ?? '', "\n";
@@ -44,7 +46,7 @@ foreach ($imap->folders() as $folder) {
 $inbox = $imap->select(FolderName::fromWire('INBOX'));
 
 // Everything that changed since the last sync, and what was expunged.
-$changes = $imap->uidFetch(UidSet::fromOnward(1), ['FLAGS'], changedSince: $lastModseq, vanished: true);
+$changes = $imap->uidFetch(UidSet::fromOnward(1), [FetchItem::flags()], changedSince: $lastModseq, vanished: true);
 foreach ($changes->messages as $message) {
     // $message->uid, $message->flags, $message->modseq
 }

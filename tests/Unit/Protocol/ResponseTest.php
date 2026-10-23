@@ -6,6 +6,7 @@ namespace CoolMS\Imap\Tests\Unit\Protocol;
 
 use CoolMS\Imap\Exception\ProtocolError;
 use CoolMS\Imap\Protocol\Response;
+use CoolMS\Imap\Protocol\ResponseCode;
 use CoolMS\Imap\Protocol\ResponseKind;
 use CoolMS\Imap\Protocol\Token;
 use PHPUnit\Framework\Attributes\Test;
@@ -38,6 +39,25 @@ final class ResponseTest extends TestCase
         self::assertSame('PERMANENTFLAGS', $items[0]->text());
         self::assertSame(['\Deleted', '\Seen', '\*'], self::texts($items[1]->items()));
         self::assertSame('Limited', $r->text);
+    }
+
+    #[Test]
+    public function aKnownCodeIsNamedAndAnUnknownOneKeepsItsRawNameWithoutAnError(): void
+    {
+        $known = Response::parse('a1 NO [nonexistent] No such folder');
+        self::assertSame('NONEXISTENT', $known->codeName());
+        self::assertSame(ResponseCode::Nonexistent, $known->knownCode());
+        self::assertSame(ResponseCode::ReadOnly, Response::parse('a2 OK [READ-ONLY] EXAMINE done')->knownCode());
+
+        $unknown = Response::parse('* OK [X-GM-THREADING 42 (a b)] something new');
+        self::assertSame('X-GM-THREADING', $unknown->codeName(), 'the raw name, as the server sent it');
+        self::assertNull($unknown->knownCode());
+        self::assertSame('something new', $unknown->text);
+
+        $none = Response::parse('a3 OK done');
+        self::assertNull($none->codeName());
+        self::assertNull($none->knownCode());
+        self::assertNull(Response::parse('* OK [(odd) 1] a code that names nothing')->codeName(), 'never an error');
     }
 
     #[Test]

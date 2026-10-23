@@ -11,6 +11,7 @@ use CoolMS\Imap\Protocol\Command;
 use CoolMS\Imap\Protocol\Response;
 use CoolMS\Imap\Protocol\ResponseKind;
 use CoolMS\Imap\Sasl\Mechanism;
+use SensitiveParameter;
 
 use function base64_decode;
 use function base64_encode;
@@ -197,7 +198,8 @@ final class Connection
         return Response::parse($raw);
     }
 
-    private function send(string $bytes): void
+    /** The wire bytes may hold a password or a token (LOGIN, AUTHENTICATE): never shown in a trace. */
+    private function send(#[SensitiveParameter] string $bytes): void
     {
         while ('' !== $bytes) {
             $written = is_resource($this->stream) ? @fwrite($this->stream, $bytes) : false;

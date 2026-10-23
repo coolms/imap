@@ -10,6 +10,7 @@ use CoolMS\Imap\Protocol\Command;
 use CoolMS\Imap\Protocol\Response;
 use CoolMS\Imap\Protocol\TokenKind;
 use CoolMS\Imap\Value\Capabilities;
+use CoolMS\Imap\Value\Capability;
 use Throwable;
 
 use function fclose;
@@ -140,7 +141,7 @@ final class Opener
         if ('PREAUTH' === $greeting->status) {
             throw new CouldNotOpen('The server authenticated the connection before STARTTLS, so it can never be secured.');
         }
-        if (!$capabilities->has('STARTTLS')) {
+        if (!$capabilities->has(Capability::StartTls)) {
             throw new CouldNotOpen('The server does not offer STARTTLS; the connection is not carried on in clear.');
         }
         $reply = $connection->run(new Command('STARTTLS'));

@@ -6,6 +6,7 @@ namespace CoolMS\Imap\Sasl;
 
 use InvalidArgumentException;
 use SensitiveParameter;
+use SensitiveParameterValue;
 
 use function str_contains;
 use function str_replace;
@@ -18,18 +19,20 @@ final class OAuthBearer implements Mechanism
 {
     public private(set) ?string $error = null;
 
+    /** Where no dump shows it: a trace that passes this mechanism along, printed, shows nothing of the token. */
+    private readonly SensitiveParameterValue $accessToken;
+
     public function __construct(
         private readonly string $username,
         #[SensitiveParameter]
-        private readonly string $accessToken,
+        string $accessToken,
         private readonly string $host,
         private readonly int $port,
     ) {
-        foreach ([$username, $accessToken, $host] as $part) {
-            if (str_contains($part, "\x01")) {
-                throw new InvalidArgumentException('An OAUTHBEARER credential cannot hold a ^A byte.');
-            }
+        if (str_contains($username, "\x01") || str_contains($accessToken, "\x01") || str_contains($host, "\x01")) {
+            throw new InvalidArgumentException('An OAUTHBEARER credential cannot hold a ^A byte.');
         }
+        $this->accessToken = new SensitiveParameterValue($accessToken);
     }
 
     public function name(): string
@@ -43,7 +46,7 @@ final class OAuthBearer implements Mechanism
         $user = str_replace(['=', ','], ['=3D', '=2C'], $this->username);
 
         return 'n,a=' . $user . ",\x01host=" . $this->host . "\x01port=" . $this->port
-            . "\x01auth=Bearer " . $this->accessToken . "\x01\x01";
+            . "\x01auth=Bearer " . $this->accessToken->getValue() . "\x01\x01";
     }
 
     public function respond(string $challenge): string

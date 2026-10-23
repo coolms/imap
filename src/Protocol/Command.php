@@ -6,6 +6,7 @@ namespace CoolMS\Imap\Protocol;
 
 use InvalidArgumentException;
 use LogicException;
+use SensitiveParameterValue;
 
 use function array_map;
 use function array_values;
@@ -82,7 +83,7 @@ final readonly class Command
         if (is_array($value)) {
             return '(' . implode(' ', array_map(self::shown(...), $value)) . ')';
         }
-        if ($argument->secret) {
+        if ($value instanceof SensitiveParameterValue) {
             return '<secret>';
         }
         if (is_int($value)) {
@@ -129,7 +130,7 @@ final readonly class Command
 
             return;
         }
-        $text = (string) $value;
+        $text = $value instanceof SensitiveParameterValue ? $value->getValue() : (string) $value;
         if (
             ArgumentKind::Literal === $argument->kind
             || (ArgumentKind::Text === $argument->kind && !self::quotable($text))
