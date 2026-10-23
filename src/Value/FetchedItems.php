@@ -78,15 +78,21 @@ final readonly class FetchedItems
         return new self((int) $data[0]->value, $uid, $flags, $modseq, $size, $internalDate, $sections);
     }
 
-    public function hasSection(string $section = ''): bool
+    /** By the Section asked for, or by its spec as text; the whole message when none is named. */
+    public function hasSection(Section|string $section = ''): bool
     {
-        return array_key_exists(strtoupper($section), $this->sections);
+        return array_key_exists(self::spec($section), $this->sections);
     }
 
     /** A section's bytes; null when the server sent NIL for it, or did not send it (hasSection() tells which). */
-    public function section(string $section = ''): ?string
+    public function section(Section|string $section = ''): ?string
     {
-        return $this->sections[strtoupper($section)] ?? null;
+        return $this->sections[self::spec($section)] ?? null;
+    }
+
+    private static function spec(Section|string $section): string
+    {
+        return $section instanceof Section ? $section->spec : strtoupper($section);
     }
 
     private static function number(Token $value, string $item): int

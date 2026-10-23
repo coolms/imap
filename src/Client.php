@@ -18,8 +18,10 @@ use CoolMS\Imap\Transport\Opened;
 use CoolMS\Imap\Transport\Opener;
 use CoolMS\Imap\Transport\Reply;
 use CoolMS\Imap\Value\Capabilities;
+use CoolMS\Imap\Value\Capability;
 use CoolMS\Imap\Value\CopyUid;
 use CoolMS\Imap\Value\FetchedItems;
+use CoolMS\Imap\Value\FetchItem;
 use CoolMS\Imap\Value\FetchResult;
 use CoolMS\Imap\Value\Folder;
 use CoolMS\Imap\Value\FolderCounts;
@@ -55,7 +57,7 @@ final class Client
     private bool $authenticated;
     private ?SelectedFolder $selected = null;
 
-    /** @var list<string> */
+    /** @var list<Capability> */
     private array $enabled = [];
 
     public function __construct(private readonly Opened $opened)
@@ -80,14 +82,14 @@ final class Client
         if (!$this->capabilities->has('AUTH=' . $mechanism->name())) {
             throw new LogicException('The server does not offer AUTH=' . $mechanism->name() . '.');
         }
-        $reply = $this->connection()->authenticate($mechanism, $this->capabilities->has('SASL-IR'));
+        $reply = $this->connection()->authenticate($mechanism, $this->capabilities->has(Capability::SaslIr));
         $this->signedIn('AUTHENTICATE ' . $mechanism->name(), $reply);
     }
 
     public function login(string $username, #[SensitiveParameter] string $password): void
     {
         $this->unauthenticated();
-        if ($this->capabilities->has('LOGINDISABLED')) {
+        if ($this->capabilities->has(Capability::LoginDisabled)) {
             throw new LogicException('The server refuses LOGIN on this connection (LOGINDISABLED).');
         }
         $reply = $this->connection()->run(
@@ -99,33 +101,39 @@ final class Client
 
     /**
      * ENABLE (RFC 5161): the extensions the server turned on, of those asked -- an extension it does not offer is not
-     * asked for at all.
+     * asked for at all. An ENABLED that names one not asked for, or one this library has no name for, is passed over.
      *
-     * @return list<string>
+     * @return list<Capability>
      */
-    public function enable(string ...$extensions): array
+    public function enable(Capability ...$extensions): array
     {
         $this->authenticatedOnly();
         $offered = array_values(array_filter(
             $extensions,
-            fn (string $extension): bool => $this->capabilities->has($extension),
+            fn (Capability $extension): bool => $this->capabilities->has($extension),
         ));
-        if ([] === $offered || !$this->capabilities->has('ENABLE')) {
+        if ([] === $offered || !$this->capabilities->has(Capability::Enable)) {
             return [];
         }
-        $reply = $this->ok(new Command('ENABLE', ...array_map(Argument::atom(...), $offered)));
+        $reply = $this->ok(new Command(
+            'ENABLE',
+            ...array_map(static fn (Capability $extension): Argument => Argument::atom($extension->value), $offered),
+        ));
         foreach ($reply->data('ENABLED') as $enabled) {
             foreach (array_slice($enabled->data, 1) as $token) {
-                $this->enabled[] = strtoupper($token->string());
+                $named = TokenKind::Atom === $token->kind ? Capability::tryFrom(strtoupper($token->string())) : null;
+                if (null !== $named && in_array($named, $offered, true) && !in_array($named, $this->enabled, true)) {
+                    $this->enabled[] = $named;
+                }
             }
         }
 
         return $this->enabled;
     }
 
-    public function enabled(string $extension): bool
+    public function enabled(Capability $extension): bool
     {
-        return in_array(strtoupper($extension), $this->enabled, true);
+        return in_array($extension, $this->enabled, true);
     }
 
     /**
@@ -138,7 +146,7 @@ final class Client
     {
         $this->authenticatedOnly();
         $arguments = [Argument::text(''), Argument::text('*')];
-        if ($this->capabilities->has('SPECIAL-USE') && $this->capabilities->has('LIST-EXTENDED')) {
+        if ($this->capabilities->has(Capability::SpecialUse) && $this->capabilities->has(Capability::ListExtended)) {
             $arguments[] = Argument::atom('RETURN');
             $arguments[] = Argument::list(Argument::atom('SPECIAL-USE'));
         }
@@ -150,7 +158,7 @@ final class Client
     {
         $this->authenticatedOnly();
         $items = [Argument::atom('MESSAGES'), Argument::atom('UNSEEN'), Argument::atom('UIDNEXT'), Argument::atom('UIDVALIDITY')];
-        if ($this->capabilities->has('CONDSTORE')) {
+        if ($this->capabilities->has(Capability::Condstore)) {
             $items[] = Argument::atom('HIGHESTMODSEQ');
         }
         $status = $this->ok(
@@ -229,21 +237,28 @@ final class Client
     }
 
     /**
-     * UID FETCH of the items named -- UID, FLAGS, MODSEQ, RFC822.SIZE, BODY.PEEK[...] -- with CHANGEDSINCE only the
+     * UID FETCH of the items named -- FetchItem::flags(), ::modseq(), ::body(Section::header()), ... -- the UID always
+     * among them, asked once; with CHANGEDSINCE only the
      * messages changed after that mod-sequence (RFC 7162 s.3.1.4), and with VANISHED also the UIDs expunged since
      * (s.3.2.6; QRESYNC enabled). The server may add a FETCH for a message it was not asked for -- another client's
      * change -- so a caller goes by each message's UID, never by position.
      *
-     * @param list<string> $items
+     * @param list<FetchItem> $items
      */
     public function uidFetch(UidSet $uids, array $items, ?int $changedSince = null, bool $vanished = false): FetchResult
     {
         $this->selectedOnly();
-        if ($vanished && (null === $changedSince || !$this->enabled('QRESYNC'))) {
+        if ($vanished && (null === $changedSince || !$this->enabled(Capability::Qresync))) {
             throw new LogicException('VANISHED needs CHANGEDSINCE and QRESYNC enabled.');
         }
         $this->modseqs($changedSince);
-        $arguments = [Argument::uids($uids), Argument::list(...array_map(Argument::raw(...), ['UID', ...$items]))];
+        $wire = ['UID'];
+        foreach ($items as $item) {
+            if (!in_array($item->wire, $wire, true)) {
+                $wire[] = $item->wire;
+            }
+        }
+        $arguments = [Argument::uids($uids), Argument::list(...array_map(Argument::raw(...), $wire))];
         if (null !== $changedSince) {
             $modifiers = [Argument::atom('CHANGEDSINCE'), Argument::number($changedSince)];
             if ($vanished) {
@@ -306,7 +321,7 @@ final class Client
     public function uidMove(UidSet $uids, FolderName $to): ?CopyUid
     {
         $this->selectedOnly();
-        if (!$this->capabilities->has('MOVE')) {
+        if (!$this->capabilities->has(Capability::Move)) {
             throw new LogicException('The server has no MOVE, and this library does not delete mail to move it.');
         }
         $reply = $this->ok(new Command('UID MOVE', Argument::uids($uids), Argument::folder($to)));
@@ -329,7 +344,7 @@ final class Client
     public function idle(Closure $each, float $seconds): void
     {
         $this->selectedOnly();
-        if (!$this->capabilities->has('IDLE')) {
+        if (!$this->capabilities->has(Capability::Idle)) {
             throw new LogicException('The server has no IDLE.');
         }
         $reply = $this->connection()->idle($each, $seconds);
@@ -379,7 +394,7 @@ final class Client
 
     private function literalPlus(): bool
     {
-        return $this->capabilities->has('LITERAL+');
+        return $this->capabilities->has(Capability::LiteralPlus);
     }
 
     private function unauthenticated(): void
@@ -399,7 +414,7 @@ final class Client
     /** A mod-sequence in a command needs CONDSTORE: refused here, not left to the server's BAD. */
     private function modseqs(?int $modseq): void
     {
-        if (null !== $modseq && !$this->capabilities->has('CONDSTORE')) {
+        if (null !== $modseq && !$this->capabilities->has(Capability::Condstore)) {
             throw new LogicException('The server has no CONDSTORE: nothing can be asked by mod-sequence.');
         }
     }

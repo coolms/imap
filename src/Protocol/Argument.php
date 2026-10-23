@@ -8,6 +8,7 @@ use CoolMS\Imap\Value\FolderName;
 use CoolMS\Imap\Value\UidSet;
 use InvalidArgumentException;
 use SensitiveParameter;
+use SensitiveParameterValue;
 
 use function array_values;
 use function preg_match;
@@ -23,16 +24,17 @@ use function str_contains;
  *  - a parenthesized list of these.
  *
  * Nothing here can carry a NUL, a bare CR or LF outside a literal: what would break the command's framing is refused
- * where it is built, never sent. A secret -- a password -- is text whose value is never shown in a command's log form.
+ * where it is built, never sent. A secret -- a password -- is text whose value is never shown in a command's log form,
+ * nor in a dump of the command: a stack trace that passes it along, printed by a logger, shows nothing of it.
  */
 final readonly class Argument
 {
     private const string ATOM = '/\A\\\\?[^\x00-\x20\x7f-\xff(){%*"\\\\\]]+\z/';
 
-    /** @param string|int|list<Argument> $value */
+    /** @param string|int|list<Argument>|SensitiveParameterValue $value a secret's text is held where no dump shows it */
     private function __construct(
         public ArgumentKind $kind,
-        public string|int|array $value,
+        public string|int|array|SensitiveParameterValue $value,
         public bool $secret = false,
     ) {
     }
@@ -56,7 +58,7 @@ final readonly class Argument
 
     public static function secret(#[SensitiveParameter] string $text): self
     {
-        return new self(ArgumentKind::Text, self::withoutNul($text), true);
+        return new self(ArgumentKind::Text, new SensitiveParameterValue(self::withoutNul($text)), true);
     }
 
     public static function literal(string $bytes): self
@@ -86,7 +88,7 @@ final readonly class Argument
         return new self(ArgumentKind::List, array_values($items));
     }
 
-    private static function withoutNul(string $bytes): string
+    private static function withoutNul(#[SensitiveParameter] string $bytes): string
     {
         return str_contains($bytes, "\0")
             ? throw new InvalidArgumentException('A command cannot carry a NUL byte outside BINARY.') : $bytes;

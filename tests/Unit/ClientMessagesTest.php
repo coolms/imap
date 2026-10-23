@@ -10,7 +10,10 @@ use CoolMS\Imap\Protocol\Argument;
 use CoolMS\Imap\Transport\Endpoint;
 use CoolMS\Imap\Transport\Opener;
 use CoolMS\Imap\Transport\Security;
+use CoolMS\Imap\Value\Capability;
+use CoolMS\Imap\Value\FetchItem;
 use CoolMS\Imap\Value\FolderName;
+use CoolMS\Imap\Value\Section;
 use CoolMS\Imap\Value\UidSet;
 use LogicException;
 use PHPUnit\Framework\Attributes\Test;
@@ -54,7 +57,7 @@ final class ClientMessagesTest extends TestCase
     {
         $client = $this->selected('ENABLE CONDSTORE QRESYNC', "* VANISHED (EARLIER) 3:5\r\n* 1 FETCH (UID 2 FLAGS (\\Seen) MODSEQ (120))\r\na3 OK\r\n", "* ENABLED CONDSTORE QRESYNC\r\na1 OK\r\n");
 
-        $result = $client->uidFetch(UidSet::fromOnward(1), ['FLAGS'], changedSince: 100, vanished: true);
+        $result = $client->uidFetch(UidSet::fromOnward(1), [FetchItem::flags()], changedSince: 100, vanished: true);
 
         self::assertSame("a3 UID FETCH 1:* (UID FLAGS) (CHANGEDSINCE 100 VANISHED)\r\n", $this->written());
         self::assertSame('3:5', $result->vanished[0]->uids->toString());
@@ -66,12 +69,30 @@ final class ClientMessagesTest extends TestCase
     }
 
     #[Test]
+    public function aHeaderAndAPartAreAskedAsItemsAndFoundByTheirSection(): void
+    {
+        $client = $this->selected('', "* 1 FETCH (UID 4 BODY[HEADER.FIELDS (FROM)] {9}\r\nFrom: a\r\n BODY[1]<0> \"hi\")\r\na2 OK\r\n");
+
+        $result = $client->uidFetch(UidSet::of([4]), [
+            FetchItem::uid(),
+            FetchItem::body(Section::headerFields('from')),
+            FetchItem::body(Section::part(1), 0, 2),
+        ]);
+
+        self::assertSame("a2 UID FETCH 4 (UID BODY.PEEK[HEADER.FIELDS (FROM)] BODY.PEEK[1]<0.2>)\r\n", $this->written(), 'UID once');
+        self::assertSame("From: a\r\n", $result->messages[0]->section(Section::headerFields('From')));
+        self::assertSame('hi', $result->messages[0]->section(Section::part(1)));
+        self::assertTrue($result->messages[0]->hasSection(Section::part(1)));
+        self::assertFalse($result->messages[0]->hasSection(Section::text()));
+    }
+
+    #[Test]
     public function vanishedIsNotAskedWithoutQresync(): void
     {
         $client = $this->selected('CONDSTORE', '');
 
         $this->expectException(LogicException::class);
-        $client->uidFetch(UidSet::fromOnward(1), ['FLAGS'], changedSince: 100, vanished: true);
+        $client->uidFetch(UidSet::fromOnward(1), [FetchItem::flags()], changedSince: 100, vanished: true);
     }
 
     #[Test]
@@ -80,7 +101,7 @@ final class ClientMessagesTest extends TestCase
         $client = $this->selected('MOVE', '');
 
         foreach ([
-            static fn () => $client->uidFetch(UidSet::fromOnward(1), ['FLAGS'], changedSince: 1),
+            static fn () => $client->uidFetch(UidSet::fromOnward(1), [FetchItem::flags()], changedSince: 1),
             static fn () => $client->uidStore(UidSet::of([1]), '+', ['\Seen'], unchangedSince: 1),
         ] as $asked) {
             try {
@@ -196,7 +217,7 @@ final class ClientMessagesTest extends TestCase
             new Opener(static fn (): mixed => $client),
         );
         if ('' !== $enable) {
-            $imap->enable('CONDSTORE', 'QRESYNC');
+            $imap->enable(Capability::Condstore, Capability::Qresync);
         }
         $imap->select(FolderName::fromWire('INBOX'));
         $this->before = strlen($this->allWritten());

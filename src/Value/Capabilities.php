@@ -35,9 +35,10 @@ final readonly class Capabilities
         return new self(array_keys($names));
     }
 
-    public function has(string $name): bool
+    /** By the enum, or by name where it has no case: AUTH=XOAUTH2, a vendor's X-... */
+    public function has(Capability|string $name): bool
     {
-        return in_array(strtoupper($name), $this->names, true);
+        return in_array($name instanceof Capability ? $name->value : strtoupper($name), $this->names, true);
     }
 
     /** @return list<string> the SASL mechanisms named by AUTH=, in the order given */

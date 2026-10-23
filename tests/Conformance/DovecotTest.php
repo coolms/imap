@@ -9,6 +9,8 @@ use CoolMS\Imap\Exception\CouldNotOpen;
 use CoolMS\Imap\Protocol\Response;
 use CoolMS\Imap\Transport\Endpoint;
 use CoolMS\Imap\Transport\Security;
+use CoolMS\Imap\Value\Capability;
+use CoolMS\Imap\Value\FetchItem;
 use CoolMS\Imap\Value\FolderName;
 use CoolMS\Imap\Value\UidSet;
 use PHPUnit\Framework\Attributes\Test;
@@ -37,7 +39,7 @@ final class DovecotTest extends TestCase
         foreach (['CONDSTORE', 'QRESYNC', 'SPECIAL-USE', 'LIST-EXTENDED', 'MOVE', 'IDLE', 'UIDPLUS'] as $extension) {
             self::assertTrue($client->capabilities()->has($extension), $extension);
         }
-        self::assertSame(['CONDSTORE', 'QRESYNC'], $client->enable('CONDSTORE', 'QRESYNC'));
+        self::assertSame([Capability::Condstore, Capability::Qresync], $client->enable(Capability::Condstore, Capability::Qresync));
     }
 
     #[Test]
@@ -53,14 +55,14 @@ final class DovecotTest extends TestCase
     public function anAppendedMessageComesBackByteForByte(): void
     {
         $client = $this->signedIn();
-        $client->enable('CONDSTORE');
+        $client->enable(Capability::Condstore);
         $message = "From: a@x.test\r\nSubject: =?UTF-8?B?0J/RgNC40LLQtdGC?=\r\n\r\nline\r\n.\r\n* 9 EXISTS\r\nend\r\n";
 
         $uid = $client->append(FolderName::fromWire('INBOX'), $message, ['\Seen']);
         $client->select(FolderName::fromWire('INBOX'));
         $fetched = $client->uidFetch(
             UidSet::of([(int) $uid]),
-            ['FLAGS', 'RFC822.SIZE', 'BODY.PEEK[]', 'MODSEQ'],
+            [FetchItem::flags(), FetchItem::size(), FetchItem::body(), FetchItem::modseq()],
         )->messages;
 
         self::assertCount(1, $fetched);
@@ -75,14 +77,14 @@ final class DovecotTest extends TestCase
     public function whatChangedAndWhatVanishedSinceAModSequence(): void
     {
         $client = $this->signedIn();
-        $client->enable('CONDSTORE', 'QRESYNC');
+        $client->enable(Capability::Condstore, Capability::Qresync);
         $kept = (int) $client->append(FolderName::fromWire('INBOX'), "Subject: kept\r\n\r\nx");
         $moved = (int) $client->append(FolderName::fromWire('INBOX'), "Subject: moved\r\n\r\nx");
         $since = (int) $client->select(FolderName::fromWire('INBOX'))->highestModseq;
 
         $client->uidStore(UidSet::of([$kept]), '+', ['\Flagged']);
         $copied = $client->uidMove(UidSet::of([$moved]), FolderName::fromWire('Trash'));
-        $changes = $client->uidFetch(UidSet::fromOnward(1), ['FLAGS'], changedSince: $since, vanished: true);
+        $changes = $client->uidFetch(UidSet::fromOnward(1), [FetchItem::flags()], changedSince: $since, vanished: true);
 
         self::assertNotNull($copied, 'Dovecot gives COPYUID');
         self::assertSame([$moved], array_keys($copied->pairs(1)));
@@ -97,10 +99,10 @@ final class DovecotTest extends TestCase
     public function aStoreOverAChangeItHasNotSeenIsNotMade(): void
     {
         $first = $this->signedIn();
-        $first->enable('CONDSTORE');
+        $first->enable(Capability::Condstore);
         $uid = (int) $first->append(FolderName::fromWire('INBOX'), "Subject: x\r\n\r\nx");
         $first->select(FolderName::fromWire('INBOX'));
-        $seenAt = (int) $first->uidFetch(UidSet::of([$uid]), ['MODSEQ'])->messages[0]->modseq;
+        $seenAt = (int) $first->uidFetch(UidSet::of([$uid]), [FetchItem::modseq()])->messages[0]->modseq;
 
         $other = $this->signedIn();
         $other->select(FolderName::fromWire('INBOX'));
@@ -109,7 +111,7 @@ final class DovecotTest extends TestCase
         $result = $first->uidStore(UidSet::of([$uid]), '+', ['\Flagged'], unchangedSince: $seenAt);
 
         self::assertSame((string) $uid, $result->notChanged?->toString(), 'another client changed it first');
-        $flags = $first->uidFetch(UidSet::of([$uid]), ['FLAGS'])->messages[0]->flags ?? [];
+        $flags = $first->uidFetch(UidSet::of([$uid]), [FetchItem::flags()])->messages[0]->flags ?? [];
         self::assertNotContains('\Flagged', $flags, 'and the store was not made');
     }
 

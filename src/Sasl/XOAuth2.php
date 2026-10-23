@@ -6,6 +6,7 @@ namespace CoolMS\Imap\Sasl;
 
 use InvalidArgumentException;
 use SensitiveParameter;
+use SensitiveParameterValue;
 
 use function str_contains;
 
@@ -19,14 +20,18 @@ final class XOAuth2 implements Mechanism
     /** The server's JSON error, when it sent one. */
     public private(set) ?string $error = null;
 
+    /** Where no dump shows it: a trace that passes this mechanism along, printed, shows nothing of the token. */
+    private readonly SensitiveParameterValue $accessToken;
+
     public function __construct(
         private readonly string $username,
         #[SensitiveParameter]
-        private readonly string $accessToken,
+        string $accessToken,
     ) {
         if (str_contains($username, "\x01") || str_contains($accessToken, "\x01")) {
             throw new InvalidArgumentException('An XOAUTH2 credential cannot hold a ^A byte.');
         }
+        $this->accessToken = new SensitiveParameterValue($accessToken);
     }
 
     public function name(): string
@@ -36,7 +41,7 @@ final class XOAuth2 implements Mechanism
 
     public function initialResponse(): string
     {
-        return 'user=' . $this->username . "\x01auth=Bearer " . $this->accessToken . "\x01\x01";
+        return 'user=' . $this->username . "\x01auth=Bearer " . $this->accessToken->getValue() . "\x01\x01";
     }
 
     public function respond(string $challenge): string

@@ -70,6 +70,22 @@ final readonly class Response
         return new self(ResponseKind::UntaggedData, null, null, null, '', Tokenizer::tokenize($after));
     }
 
+    /** The response code's name, upper-cased, known or not; null when there is no code or it names nothing. */
+    public function codeName(): ?string
+    {
+        $first = $this->code?->items()[0] ?? null;
+
+        return TokenKind::Atom === $first?->kind ? strtoupper($first->string()) : null;
+    }
+
+    /** The response code when this library knows it; a code it does not know is null here, never an error. */
+    public function knownCode(): ?ResponseCode
+    {
+        $name = $this->codeName();
+
+        return null === $name ? null : ResponseCode::tryFrom($name);
+    }
+
     /** @return array{?Token, string} */
     private static function codeAndText(string $response, string $rest): array
     {

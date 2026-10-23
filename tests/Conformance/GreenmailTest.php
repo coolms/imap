@@ -7,6 +7,8 @@ namespace CoolMS\Imap\Tests\Conformance;
 use CoolMS\Imap\Client;
 use CoolMS\Imap\Transport\Endpoint;
 use CoolMS\Imap\Transport\Security;
+use CoolMS\Imap\Value\Capability;
+use CoolMS\Imap\Value\FetchItem;
 use CoolMS\Imap\Value\FolderName;
 use CoolMS\Imap\Value\UidSet;
 use PHPUnit\Framework\Attributes\Test;
@@ -24,7 +26,7 @@ final class GreenmailTest extends TestCase
     {
         $client = $this->signedIn();
 
-        self::assertSame([], $client->enable('CONDSTORE', 'QRESYNC'));
+        self::assertSame([], $client->enable(Capability::Condstore, Capability::Qresync));
         self::assertNull($client->select(FolderName::fromWire('INBOX'))->highestModseq);
     }
 
@@ -37,7 +39,7 @@ final class GreenmailTest extends TestCase
         $uid = $client->append(FolderName::fromWire('INBOX'), $message);
         $client->select(FolderName::fromWire('INBOX'));
         $client->uidStore(UidSet::of([(int) $uid]), '+', ['\Seen']);
-        $fetched = $client->uidFetch(UidSet::of([(int) $uid]), ['FLAGS', 'BODY.PEEK[]'])->messages;
+        $fetched = $client->uidFetch(UidSet::of([(int) $uid]), [FetchItem::flags(), FetchItem::body()])->messages;
 
         self::assertNotNull($uid, 'greenmail has UIDPLUS');
         self::assertSame($message, $fetched[0]->section());
