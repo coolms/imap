@@ -76,7 +76,7 @@ jobs:
         run: tests/Conformance/run.sh --testdox
 
   zero-dependency:
-    name: Zero runtime dependencies
+    name: Runtime dependencies are Symfony components, never a framework
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -85,21 +85,25 @@ jobs:
           php-version: '8.5'
           coverage: none
 
-      # The README promises no dependencies; assert it rather than trust it.
+      # The README promises Symfony components only -- polyfills and standalone components, never the framework;
+      # assert it rather than trust it.
       - name: Install runtime dependencies only
         run: composer update --no-dev --prefer-dist --no-interaction --no-progress
 
       # Plain text, not --format=json: with nothing installed `composer show` prints nothing to stdout, so empty here
       # really means empty, and a renamed JSON key cannot make it pass for the wrong reason.
-      - name: Assert nothing was installed
+      - name: Assert only Symfony components were installed
         run: |
-          installed=$(composer show --no-dev 2>/dev/null)
-          if [ -n "$installed" ]; then
-            echo "::error::coolms/imap claims zero runtime dependencies, but these were installed:"
-            echo "$installed"
+          installed=$(composer show --no-dev --name-only 2>/dev/null)
+          [ -n "$installed" ] || { echo "::error::nothing installed: the polyfills this library requires are missing"; exit 1; }
+          bad=$(printf '%s\n' "$installed" | grep -vE '^symfony/' ; printf '%s\n' "$installed" | grep -xE 'symfony/(symfony|framework-bundle)')
+          if [ -n "$bad" ]; then
+            echo "::error::coolms/imap allows Symfony components only, never a framework; these were installed:"
+            echo "$bad"
             exit 1
           fi
-          echo "confirmed: zero runtime dependencies"
+          echo "confirmed: $(printf '%s\n' "$installed" | wc -l) runtime dependencies, each a Symfony component:"
+          echo "$installed"
 
   static:
     name: PHPStan (level 8) and code style

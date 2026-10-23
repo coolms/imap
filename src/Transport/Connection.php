@@ -11,6 +11,7 @@ use CoolMS\Imap\Protocol\Command;
 use CoolMS\Imap\Protocol\Response;
 use CoolMS\Imap\Protocol\ResponseKind;
 use CoolMS\Imap\Sasl\Mechanism;
+use LogicException;
 use SensitiveParameter;
 
 use function base64_decode;
@@ -21,6 +22,7 @@ use function hrtime;
 use function in_array;
 use function intdiv;
 use function is_resource;
+use function stream_get_meta_data;
 use function stream_select;
 use function strlen;
 use function substr;
@@ -39,6 +41,7 @@ use function substr;
 final class Connection
 {
     private int $sent = 0;
+    private ?string $idleTag = null;
 
     /**
      * @param resource                             $stream
@@ -163,6 +166,68 @@ final class Connection
         $this->send("DONE\r\n");
 
         return new Reply($this->until($tag, $untagged, false), $untagged);
+    }
+
+    /**
+     * IDLE in pieces, for a Watch that waits on several connections at once: begin (IDLE, then the server's "+"),
+     * each untagged response as it comes, then end (DONE, then the completion). Null from beginIdle() is "idling";
+     * a Reply is the server's refusal, and nothing is idling.
+     */
+    public function beginIdle(): ?Reply
+    {
+        $tag = $this->idleTag = $this->tag();
+        $this->log('C', $tag . ' IDLE');
+        $this->send($tag . " IDLE\r\n");
+        $untagged = [];
+        $response = $this->until($tag, $untagged, true);
+        if (ResponseKind::Tagged === $response->kind) {
+            $this->idleTag = null;
+
+            return new Reply($response, $untagged);
+        }
+
+        return null;
+    }
+
+    /** The next response while idling: untagged only, as RFC 2177 has it. It blocks until one comes. */
+    public function idleNext(): Response
+    {
+        if (null === $this->idleTag) {
+            throw new LogicException('Not idling.');
+        }
+        $response = $this->read();
+        if (ResponseKind::UntaggedData !== $response->kind && ResponseKind::UntaggedStatus !== $response->kind) {
+            throw new ProtocolError($response->text, 0, 'only untagged responses come during IDLE');
+        }
+
+        return $response;
+    }
+
+    /** DONE, and the server's completion of the IDLE, with whatever came between. */
+    public function endIdle(): Reply
+    {
+        $tag = $this->idleTag ?? throw new LogicException('Not idling.');
+        $this->idleTag = null;
+        $this->log('C', 'DONE');
+        $this->send("DONE\r\n");
+        $untagged = [];
+
+        return new Reply($this->until($tag, $untagged, false), $untagged);
+    }
+
+    /**
+     * Bytes PHP has already read from the socket for this connection and not handed out: a TLS record can carry two
+     * responses, and after the first is read the second waits here, where a poll() on the socket never sees it.
+     */
+    public function buffered(): bool
+    {
+        return is_resource($this->stream) && stream_get_meta_data($this->stream)['unread_bytes'] > 0;
+    }
+
+    /** @return resource the stream, for a poller to wait on */
+    public function stream(): mixed
+    {
+        return $this->stream;
     }
 
     /** @param list<Response> $untagged */

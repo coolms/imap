@@ -12,12 +12,15 @@ use CoolMS\Imap\Transport\Security;
 use CoolMS\Imap\Value\Capability;
 use CoolMS\Imap\Value\FetchItem;
 use CoolMS\Imap\Value\FolderName;
+use CoolMS\Imap\Value\SpecialUse;
 use CoolMS\Imap\Value\UidSet;
+use CoolMS\Imap\Watch;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
 use function array_map;
 use function bin2hex;
+use function count;
 use function getenv;
 use function random_bytes;
 use function sort;
@@ -130,6 +133,43 @@ final class DovecotTest extends TestCase
         }, 10.0);
 
         self::assertContains('EXISTS', $heard);
+    }
+
+    #[Test]
+    public function oneWatchHearsTwoFoldersIdlingOnTwoConnections(): void
+    {
+        $sent = null;
+        foreach ($this->signedIn()->folders() as $folder) {
+            if (SpecialUse::Sent === $folder->role) {
+                $sent = $folder->name;
+            }
+        }
+        self::assertNotNull($sent, 'the account has a \Sent folder');
+        $inbox = $this->signedIn();
+        $inbox->select(FolderName::fromWire('INBOX'));
+        $outbox = $this->signedIn();
+        $outbox->select($sent);
+        $watch = new Watch();
+        $watch->add('inbox', $inbox);
+        $watch->add('sent', $outbox);
+
+        $writer = $this->signedIn();
+        $writer->append(FolderName::fromWire('INBOX'), "Subject: to inbox\r\n\r\nx");
+        $writer->append($sent, "Subject: to sent\r\n\r\nx");
+        $heard = [];
+        for ($i = 0; $i < 10 && 2 > count($heard); ++$i) {
+            foreach ($watch->wait(2.0) as $key => $responses) {
+                foreach ($responses as $response) {
+                    if ('EXISTS' === ($response->data[1]->value ?? null)) {
+                        $heard[$key] = true;
+                    }
+                }
+            }
+        }
+        $watch->end();
+
+        self::assertSame(['inbox' => true, 'sent' => true], $heard, 'each folder\'s EXISTS, through one wait');
+        self::assertSame([], $watch->failures());
     }
 
     #[Test]

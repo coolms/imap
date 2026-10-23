@@ -16,7 +16,8 @@ mail as it arrives, and never lose a change another client made in between.
   by MOVE.
 - **Bounded.** Response lines and literals have limits checked before they are read into memory; UID sets are kept as
   ranges, never expanded.
-- **Zero dependencies.** PHP 8.5 with `ext-ctype` and `ext-openssl`.
+- **No framework.** PHP 8.5 with `ext-ctype` and `ext-openssl`, and two Symfony polyfills: `Io\Poll` and
+  `Time\Duration`, both in PHP 8.6 core, for waiting on several connections at once (`Watch`).
 
 ## Install
 
