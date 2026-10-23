@@ -1,0 +1,45 @@
+{
+    "name": "coolms/imap",
+    "description": "An IMAP client for PHP that keeps mail in sync: CONDSTORE, QRESYNC, IDLE, SPECIAL-USE folders and MOVE, with TLS verified and nothing ever deleted. Zero dependencies.",
+    "type": "library",
+    "license": "MIT",
+    "keywords": ["imap", "email", "mail", "condstore", "qresync", "idle", "xoauth2", "sasl"],
+    "authors": [
+        {
+            "name": "Dmitry Popov",
+            "email": "d.popov@altgraphic.com"
+        }
+    ],
+    "support": {
+        "issues": "https://github.com/coolms/imap/issues",
+        "source": "https://github.com/coolms/imap"
+    },
+    "require": {
+        "php": "^8.5",
+        "ext-ctype": "*",
+        "ext-openssl": "*"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^12.5"
+    },
+    "autoload": {
+        "psr-4": {
+            "CoolMS\\Imap\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "CoolMS\\Imap\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "phpunit",
+        "conformance": "tests/Conformance/run.sh"
+    },
+    "extra": {
+        "branch-alias": {
+            "dev-develop": "0.1.x-dev"
+        }
+    },
+    "minimum-stability": "stable"
+}

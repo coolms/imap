@@ -1,0 +1,33 @@
+# The servers the conformance suite runs against, on 127.0.0.1 only. Both images are pinned by digest, so a run
+# today and a run in a year talk to the same server.
+#
+# The password is a fixture, public on purpose: these servers hold nothing but the mail the tests write.
+name: coolms-imap-conformance
+
+services:
+  # Dovecot 2.4: CONDSTORE, QRESYNC, SPECIAL-USE, MOVE, IDLE, STARTTLS on 31143, TLS on 31993. Any user name signs in
+  # with USER_PASSWORD; its certificate is its own, self-signed, for "localhost".
+  dovecot:
+    image: dovecot/dovecot:2.4.5@sha256:c807be4fb5a97d9c3a90770569d3a6c4cbdcb36742ad41f90409cbd929166553
+    environment:
+      USER_PASSWORD: conformance
+    configs:
+      - source: cleartext
+        target: /etc/dovecot/conf.d/zz-test.conf
+    ports:
+      - "127.0.0.1:41143:31143"
+      - "127.0.0.1:41993:31993"
+
+  # GreenMail 2.1: plain IMAP -- no CONDSTORE, no SPECIAL-USE -- which a client must handle too. Any user, any password.
+  greenmail:
+    image: greenmail/standalone:2.1.0@sha256:308685b99ad840f05bd2dee43f47f7956f876adbf396523f68166f078300cd29
+    environment:
+      GREENMAIL_OPTS: "-Dgreenmail.setup.test.all -Dgreenmail.hostname=0.0.0.0 -Dgreenmail.auth.disabled"
+    ports:
+      - "127.0.0.1:43143:3143"
+
+configs:
+  # Sign-in over the plain port, from outside the container: the tests that are not about TLS use it.
+  cleartext:
+    content: |
+      auth_allow_cleartext = yes

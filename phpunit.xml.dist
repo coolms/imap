@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Two suites. "unit" is the default and needs no network. "conformance" runs the client against real servers:
+    tests/Conformance/run.sh starts them and runs it.
+
+    Note: no double hyphen anywhere in this comment. XML forbids it, and PHPUnit reports it as
+    "Double hyphen within comment" with no file name attached.
+-->
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         colors="true"
+         cacheDirectory=".phpunit.cache"
+         defaultTestSuite="unit"
+         executionOrder="random"
+         resolveDependencies="true"
+         failOnRisky="true"
+         failOnWarning="true"
+         failOnNotice="true"
+         failOnDeprecation="true"
+         beStrictAboutOutputDuringTests="true"
+         displayDetailsOnTestsThatTriggerWarnings="true"
+         displayDetailsOnTestsThatTriggerDeprecations="true">
+    <testsuites>
+        <testsuite name="unit">
+            <directory>tests/Unit</directory>
+        </testsuite>
+        <testsuite name="conformance">
+            <directory>tests/Conformance</directory>
+        </testsuite>
+    </testsuites>
+
+    <source>
+        <include>
+            <directory>src</directory>
+        </include>
+    </source>
+</phpunit>
