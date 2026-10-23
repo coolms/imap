@@ -76,7 +76,7 @@ jobs:
         run: tests/Conformance/run.sh --testdox
 
   zero-dependency:
-    name: Runtime dependencies are Symfony components, never a framework
+    name: Runtime dependencies are Symfony components
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
