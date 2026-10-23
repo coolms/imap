@@ -96,7 +96,8 @@ jobs:
         run: |
           installed=$(composer show --no-dev --name-only 2>/dev/null)
           [ -n "$installed" ] || { echo "::error::nothing installed: the polyfills this library requires are missing"; exit 1; }
-          bad=$(printf '%s\n' "$installed" | grep -vE '^symfony/' ; printf '%s\n' "$installed" | grep -xE 'symfony/(symfony|framework-bundle)')
+          # grep exits 1 when it finds nothing, and the step runs under bash -e: "nothing bad" must not end it.
+          bad=$( { printf '%s\n' "$installed" | grep -vE '^symfony/'; printf '%s\n' "$installed" | grep -xE 'symfony/(symfony|framework-bundle)'; } || true)
           if [ -n "$bad" ]; then
             echo "::error::coolms/imap allows Symfony components only, never a framework; these were installed:"
             echo "$bad"
