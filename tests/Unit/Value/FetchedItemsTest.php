@@ -29,6 +29,7 @@ final class FetchedItemsTest extends TestCase
         yield 'no sequence number' => ['* FETCH (UID 1)'];
         yield 'a Gmail id that is not a number' => ['* 1 FETCH (X-GM-MSGID 12a)'];
         yield 'a Gmail id past 20 digits' => ['* 1 FETCH (X-GM-THRID 123456789012345678901)'];
+        yield 'a Gmail id one past 2^64-1' => ['* 1 FETCH (X-GM-MSGID 18446744073709551616)'];
         yield 'a Gmail id that is a string' => ['* 1 FETCH (X-GM-MSGID "12")'];
         yield 'Gmail labels not a list' => ['* 1 FETCH (X-GM-LABELS Work)'];
         yield 'a Gmail label that is a list' => ['* 1 FETCH (X-GM-LABELS ((Work)))'];

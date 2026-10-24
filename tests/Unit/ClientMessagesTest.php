@@ -133,19 +133,19 @@ final class ClientMessagesTest extends TestCase
     }
 
     #[Test]
-    public function trashAndSpamAreNeverStoredNorALabelGivenAsBareText(): void
+    public function aFolderGivenAsBareTextIsRefusedSoItsEncodingCannotBeWrong(): void
     {
         $client = $this->selected('X-GM-EXT-1', '');
 
-        foreach (['\Trash' => 'deletes no mail', '\spam' => 'deletes no mail', 'Work' => 'no system label'] as $label => $why) {
+        foreach (['Work', 'Clients & Co'] as $label) {
             try {
-                $client->uidStoreLabels(UidSet::of([4]), '+', [$label]);
+                $client->uidStoreLabels(UidSet::of([4]), '+', ['\Starred', $label]);
                 self::fail($label . ' stored');
             } catch (LogicException $refused) {
-                self::assertStringContainsString($why, $refused->getMessage());
+                self::assertStringContainsString('no system label', $refused->getMessage());
             }
         }
-        self::assertSame('', $this->written());
+        self::assertSame('', $this->written(), 'nothing sent, not even the valid label before it');
     }
 
     #[Test]

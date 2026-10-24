@@ -12,6 +12,8 @@ use CoolMS\Imap\Protocol\TokenKind;
 use function array_key_exists;
 use function count;
 use function preg_match;
+use function strcmp;
+use function strlen;
 use function strtoupper;
 
 /**
@@ -147,12 +149,13 @@ final readonly class FetchedItems
         return $flags;
     }
 
-    /** A number, or -- past PHP_INT_MAX -- the digits the tokenizer left as an atom. */
+    /** A number, or -- past PHP_INT_MAX -- the digits the tokenizer left as an atom; never past 2^64-1. */
     private static function gmailId(Token $value, string $item): string
     {
         $digits = TokenKind::Number === $value->kind || TokenKind::Atom === $value->kind ? $value->string() : '';
+        $fits = strlen($digits) < 20 || strcmp($digits, '18446744073709551615') <= 0;
 
-        return 1 === preg_match('/\A[0-9]{1,20}\z/', $digits)
+        return 1 === preg_match('/\A[0-9]{1,20}\z/', $digits) && $fits
             ? $digits
             : throw new ProtocolError('FETCH', 0, $item . ' is a number');
     }

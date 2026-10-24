@@ -322,8 +322,9 @@ final class Client
      * string starting with a backslash (\Inbox, \Important, \Starred); any other label is a folder, by its name.
      * Taking \Inbox away archives the message; it stays in All Mail.
      *
-     * \Trash and \Spam are refused: Gmail empties both after 30 days, so either deletes mail, which this library
-     * does not do.
+     * Adding \Trash or \Spam -- or the label of either folder -- puts the message where Gmail empties it after 30 days,
+     * as uidMove() into that folder does. The library's rule is the one it keeps everywhere: it never stores \Deleted
+     * and never expunges; where a message goes is the caller's choice.
      *
      * @param list<FolderName|string> $labels
      */
@@ -346,11 +347,6 @@ final class Client
             }
             if (!str_starts_with($label, '\\')) {
                 throw new LogicException('"' . $label . '" is no system label: name a folder by its FolderName.');
-            }
-            if (0 === strcasecmp($label, '\\Trash') || 0 === strcasecmp($label, '\\Spam')) {
-                $why = ' is never stored: Gmail empties it, and this library deletes no mail.';
-
-                throw new LogicException($label . $why);
             }
             $wire[] = Argument::atom($label);
         }
