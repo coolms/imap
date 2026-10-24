@@ -12,6 +12,8 @@ use CoolMS\Imap\Protocol\TokenKind;
 use function array_key_exists;
 use function count;
 use function preg_match;
+use function strcmp;
+use function strlen;
 use function strtoupper;
 
 /**
@@ -21,12 +23,17 @@ use function strtoupper;
  *
  * Body sections are kept by their section, "" for the whole message: BODY.PEEK[HEADER] comes back as BODY[HEADER],
  * and a partial's "<origin>" is not part of the name.
+ *
+ * Gmail's ids (X-GM-EXT-1) are unsigned 64-bit numbers, kept as their digits: one past PHP_INT_MAX is still an id.
+ * Its labels are kept as sent: a system label starts with a backslash (\Inbox, \Important, \Sent), any other is a
+ * folder's wire name (FolderName::fromWire() reads it).
  */
 final readonly class FetchedItems
 {
     /**
      * @param list<string>|null          $flags
      * @param array<string, string|null> $sections
+     * @param list<string>|null          $gmailLabels
      */
     public function __construct(
         public int $sequence,
@@ -36,6 +43,9 @@ final readonly class FetchedItems
         public ?int $size,
         public ?string $internalDate,
         private array $sections,
+        public ?string $gmailMessageId = null,
+        public ?string $gmailThreadId = null,
+        public ?array $gmailLabels = null,
     ) {
     }
 
@@ -50,7 +60,7 @@ final readonly class FetchedItems
         if (0 !== count($items) % 2) {
             throw new ProtocolError('FETCH', 0, 'a FETCH item without its value');
         }
-        $uid = $flags = $modseq = $size = $internalDate = null;
+        $uid = $flags = $modseq = $size = $internalDate = $gmailMessageId = $gmailThreadId = $gmailLabels = null;
         $sections = [];
         for ($i = 0; $i < count($items); $i += 2) {
             [$name, $value] = [$items[$i], $items[$i + 1]];
@@ -71,11 +81,25 @@ final readonly class FetchedItems
                 'INTERNALDATE' => $internalDate = TokenKind::Quoted === $value->kind
                     ? $value->string()
                     : throw new ProtocolError('FETCH', 0, 'INTERNALDATE is a quoted date'),
+                'X-GM-MSGID' => $gmailMessageId = self::gmailId($value, 'X-GM-MSGID'),
+                'X-GM-THRID' => $gmailThreadId = self::gmailId($value, 'X-GM-THRID'),
+                'X-GM-LABELS' => $gmailLabels = self::gmailLabels($value),
                 default => null,
             };
         }
 
-        return new self((int) $data[0]->value, $uid, $flags, $modseq, $size, $internalDate, $sections);
+        return new self(
+            (int) $data[0]->value,
+            $uid,
+            $flags,
+            $modseq,
+            $size,
+            $internalDate,
+            $sections,
+            $gmailMessageId,
+            $gmailThreadId,
+            $gmailLabels,
+        );
     }
 
     /** By the Section asked for, or by its spec as text; the whole message when none is named. */
@@ -123,6 +147,34 @@ final readonly class FetchedItems
         }
 
         return $flags;
+    }
+
+    /** A number, or -- past PHP_INT_MAX -- the digits the tokenizer left as an atom; never past 2^64-1. */
+    private static function gmailId(Token $value, string $item): string
+    {
+        $digits = TokenKind::Number === $value->kind || TokenKind::Atom === $value->kind ? $value->string() : '';
+        $fits = strlen($digits) < 20 || strcmp($digits, '18446744073709551615') <= 0;
+
+        return 1 === preg_match('/\A[0-9]{1,20}\z/', $digits) && $fits
+            ? $digits
+            : throw new ProtocolError('FETCH', 0, $item . ' is a number');
+    }
+
+    /** @return list<string> */
+    private static function gmailLabels(Token $value): array
+    {
+        if (TokenKind::List !== $value->kind) {
+            throw new ProtocolError('FETCH', 0, 'X-GM-LABELS is a list');
+        }
+        $labels = [];
+        foreach ($value->items() as $label) {
+            $labels[] = match ($label->kind) {
+                TokenKind::Atom, TokenKind::Quoted, TokenKind::Literal, TokenKind::Number => $label->string(),
+                default => throw new ProtocolError('FETCH', 0, 'a label is a string'),
+            };
+        }
+
+        return $labels;
     }
 
     private static function body(Token $value): ?string

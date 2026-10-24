@@ -15,6 +15,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   is dropped from the watch and named in `failures()`; the others go on.
 - `Client::beginIdle()`, `idleNext()`, `endIdle()`, `buffered()` and `stream()`: IDLE in pieces, for `Watch`.
 - `Transport\Poller` and `Transport\IoPoller` (`Io\Poll`): the wait `Watch` makes, and the seam a test replaces.
+- Gmail's extensions (`Capability::GmailExtensions`, X-GM-EXT-1): `FetchItem::gmailMessageId()`, `::gmailThreadId()`
+  and `::gmailLabels()`, read into `FetchedItems::$gmailMessageId`, `$gmailThreadId` (digits, as strings: an
+  unsigned 64-bit id may pass `PHP_INT_MAX`) and `$gmailLabels` (as sent). `Client::uidStoreLabels()` adds, removes
+  or replaces labels: a system label by its backslash name, any other by its `FolderName`. Every Gmail item is
+  refused where the server does not name X-GM-EXT-1.
 
 ### Changed
 

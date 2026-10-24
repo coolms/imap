@@ -27,6 +27,12 @@ final class FetchedItemsTest extends TestCase
         yield 'a flag that is a string' => ['* 1 FETCH (FLAGS ("x"))'];
         yield 'a body that is a list' => ['* 1 FETCH (BODY[] (x))'];
         yield 'no sequence number' => ['* FETCH (UID 1)'];
+        yield 'a Gmail id that is not a number' => ['* 1 FETCH (X-GM-MSGID 12a)'];
+        yield 'a Gmail id past 20 digits' => ['* 1 FETCH (X-GM-THRID 123456789012345678901)'];
+        yield 'a Gmail id one past 2^64-1' => ['* 1 FETCH (X-GM-MSGID 18446744073709551616)'];
+        yield 'a Gmail id that is a string' => ['* 1 FETCH (X-GM-MSGID "12")'];
+        yield 'Gmail labels not a list' => ['* 1 FETCH (X-GM-LABELS Work)'];
+        yield 'a Gmail label that is a list' => ['* 1 FETCH (X-GM-LABELS ((Work)))'];
     }
 
     /** @return iterable<string, array{string}> */
@@ -88,7 +94,24 @@ final class FetchedItemsTest extends TestCase
     #[Test]
     public function anItemNotKnownIsPassedOver(): void
     {
-        self::assertSame(5, FetchedItems::fromFetch(Response::parse('* 1 FETCH (X-GM-MSGID 1278455344230334865 UID 5 X-GM-LABELS ("\\\\Inbox" Work))'))->uid);
+        self::assertSame(5, FetchedItems::fromFetch(Response::parse('* 1 FETCH (X-VENDOR 12 UID 5 X-VENDOR-LIST ("a" b))'))->uid);
+    }
+
+    #[Test]
+    public function gmailsIdsAreKeptAsDigitsAndItsLabelsAsSent(): void
+    {
+        $items = FetchedItems::fromFetch(Response::parse(
+            '* 1 FETCH (X-GM-MSGID 1278455344230334865 X-GM-THRID 18446744073709551615 UID 5 '
+            . 'X-GM-LABELS ("\\\\Important" \\Starred Work "Clients/&BCEEPwQ4BEEEPgQ6-" 2026))',
+        ));
+
+        self::assertSame('1278455344230334865', $items->gmailMessageId);
+        self::assertSame('18446744073709551615', $items->gmailThreadId, 'past PHP_INT_MAX: still the id, digit for digit');
+        self::assertSame(['\Important', '\Starred', 'Work', 'Clients/&BCEEPwQ4BEEEPgQ6-', '2026'], $items->gmailLabels);
+
+        $plain = FetchedItems::fromFetch(Response::parse('* 1 FETCH (UID 5 X-GM-LABELS ())'));
+        self::assertNull($plain->gmailMessageId, 'not asked: null');
+        self::assertSame([], $plain->gmailLabels, 'no label but the folder\'s: said');
     }
 
     #[Test]

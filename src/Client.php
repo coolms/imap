@@ -39,6 +39,7 @@ use function array_slice;
 use function array_values;
 use function count;
 use function in_array;
+use function str_starts_with;
 use function strcasecmp;
 use function strtoupper;
 
@@ -254,6 +255,9 @@ final class Client
         $this->modseqs($changedSince);
         $wire = ['UID'];
         foreach ($items as $item) {
+            if ($item->isGmail() && !$this->capabilities->has(Capability::GmailExtensions)) {
+                throw new LogicException('The server has no X-GM-EXT-1: ' . $item->wire . ' is Gmail\'s.');
+            }
             if (!in_array($item->wire, $wire, true)) {
                 $wire[] = $item->wire;
             }
@@ -311,6 +315,45 @@ final class Client
         }
 
         return new StoreResult(array_map(FetchedItems::fromFetch(...), $reply->data('FETCH')), $notChanged);
+    }
+
+    /**
+     * UID STORE of Gmail labels (X-GM-EXT-1) -- "+" adds, "-" removes, "" replaces -- silent. A system label is a
+     * string starting with a backslash (\Inbox, \Important, \Starred); any other label is a folder, by its name.
+     * Taking \Inbox away archives the message; it stays in All Mail.
+     *
+     * Adding \Trash or \Spam -- or the label of either folder -- puts the message where Gmail empties it after 30 days,
+     * as uidMove() into that folder does. The library's rule is the one it keeps everywhere: it never stores \Deleted
+     * and never expunges; where a message goes is the caller's choice.
+     *
+     * @param list<FolderName|string> $labels
+     */
+    public function uidStoreLabels(UidSet $uids, string $how, array $labels): StoreResult
+    {
+        $this->selectedOnly();
+        if (!$this->capabilities->has(Capability::GmailExtensions)) {
+            throw new LogicException('The server has no X-GM-EXT-1: there are no labels to store.');
+        }
+        $item = match ($how) {
+            '+', '-', '' => $how . 'X-GM-LABELS.SILENT',
+            default => throw new LogicException('A store adds ("+"), removes ("-") or replaces ("").'),
+        };
+        $wire = [];
+        foreach ($labels as $label) {
+            if ($label instanceof FolderName) {
+                $wire[] = Argument::folder($label);
+
+                continue;
+            }
+            if (!str_starts_with($label, '\\')) {
+                throw new LogicException('"' . $label . '" is no system label: name a folder by its FolderName.');
+            }
+            $wire[] = Argument::atom($label);
+        }
+        $store = new Command('UID STORE', Argument::uids($uids), Argument::atom($item), Argument::list(...$wire));
+        $reply = $this->ok($store);
+
+        return new StoreResult(array_map(FetchedItems::fromFetch(...), $reply->data('FETCH')), null);
     }
 
     /**
