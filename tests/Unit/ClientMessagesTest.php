@@ -87,6 +87,68 @@ final class ClientMessagesTest extends TestCase
     }
 
     #[Test]
+    public function gmailsItemsAreFetchedWhereTheServerNamesItsExtension(): void
+    {
+        $client = $this->selected('X-GM-EXT-1', "* 1 FETCH (UID 4 X-GM-MSGID 77 X-GM-THRID 70 X-GM-LABELS (\\Inbox))\r\na2 OK\r\n");
+
+        $items = [FetchItem::gmailMessageId(), FetchItem::gmailThreadId(), FetchItem::gmailLabels()];
+        $result = $client->uidFetch(UidSet::of([4]), $items);
+
+        self::assertSame("a2 UID FETCH 4 (UID X-GM-MSGID X-GM-THRID X-GM-LABELS)\r\n", $this->written());
+        self::assertSame('70', $result->messages[0]->gmailThreadId);
+    }
+
+    #[Test]
+    public function withoutGmailsExtensionNoneOfItsItemsIsAskedNorALabelStored(): void
+    {
+        $client = $this->selected('MOVE', '');
+
+        foreach ([
+            static fn () => $client->uidFetch(UidSet::of([4]), [FetchItem::flags(), FetchItem::gmailLabels()]),
+            static fn () => $client->uidStoreLabels(UidSet::of([4]), '+', ['\Starred']),
+        ] as $asked) {
+            try {
+                $asked();
+                self::fail('Gmail asked of a server without X-GM-EXT-1');
+            } catch (LogicException $refused) {
+                self::assertStringContainsString('no X-GM-EXT-1', $refused->getMessage());
+            }
+        }
+        self::assertSame('', $this->written());
+    }
+
+    #[Test]
+    public function labelsAreStoredSystemOnesAsAtomsFoldersByTheirName(): void
+    {
+        $client = $this->selected('X-GM-EXT-1', "a2 OK\r\na3 OK\r\n");
+
+        $client->uidStoreLabels(UidSet::parse('4:6'), '+', ['\Starred', FolderName::fromDisplay('Clients & Co')]);
+        $client->uidStoreLabels(UidSet::of([4]), '-', ['\Inbox']);
+
+        self::assertSame(
+            "a2 UID STORE 4:6 +X-GM-LABELS.SILENT (\\Starred \"Clients &- Co\")\r\n"
+            . "a3 UID STORE 4 -X-GM-LABELS.SILENT (\\Inbox)\r\n",
+            $this->written(),
+        );
+    }
+
+    #[Test]
+    public function trashAndSpamAreNeverStoredNorALabelGivenAsBareText(): void
+    {
+        $client = $this->selected('X-GM-EXT-1', '');
+
+        foreach (['\Trash' => 'deletes no mail', '\spam' => 'deletes no mail', 'Work' => 'no system label'] as $label => $why) {
+            try {
+                $client->uidStoreLabels(UidSet::of([4]), '+', [$label]);
+                self::fail($label . ' stored');
+            } catch (LogicException $refused) {
+                self::assertStringContainsString($why, $refused->getMessage());
+            }
+        }
+        self::assertSame('', $this->written());
+    }
+
+    #[Test]
     public function vanishedIsNotAskedWithoutQresync(): void
     {
         $client = $this->selected('CONDSTORE', '');

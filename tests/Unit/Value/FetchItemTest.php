@@ -36,6 +36,9 @@ final class FetchItemTest extends TestCase
         yield 'a part' => [FetchItem::body(Section::part(1, 2)), 'BODY.PEEK[1.2]'];
         yield 'a part\'s MIME header' => [FetchItem::body(Section::partMime(2)), 'BODY.PEEK[2.MIME]'];
         yield 'the first KiB' => [FetchItem::body(Section::whole(), 0, 1024), 'BODY.PEEK[]<0.1024>'];
+        yield 'Gmail\'s message id' => [FetchItem::gmailMessageId(), 'X-GM-MSGID'];
+        yield 'Gmail\'s thread id' => [FetchItem::gmailThreadId(), 'X-GM-THRID'];
+        yield 'Gmail\'s labels' => [FetchItem::gmailLabels(), 'X-GM-LABELS'];
     }
 
     /** @return iterable<string, array{Closure(): mixed}> */

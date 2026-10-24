@@ -11,12 +11,15 @@ namespace CoolMS\Imap\Value;
  *
  * Those ENABLE (RFC 5161) turns on: CONDSTORE and QRESYNC (RFC 7162), UTF8=ACCEPT (RFC 6855), IMAP4rev2 (RFC 9051),
  * METADATA (RFC 5464).
+ *
+ * X-GM-EXT-1 is Gmail's: X-GM-MSGID, X-GM-THRID and X-GM-LABELS (developers.google.com/gmail/imap/imap-extensions).
  */
 enum Capability: string
 {
     case Binary = 'BINARY';
     case Condstore = 'CONDSTORE';
     case Enable = 'ENABLE';
+    case GmailExtensions = 'X-GM-EXT-1';
     case Id = 'ID';
     case Idle = 'IDLE';
     case Imap4rev1 = 'IMAP4REV1';

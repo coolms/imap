@@ -6,6 +6,8 @@ namespace CoolMS\Imap\Value;
 
 use InvalidArgumentException;
 
+use function str_starts_with;
+
 /**
  * One item of a FETCH (RFC 9051 s.6.4.5), as the command will carry it. A body section is always BODY.PEEK: reading a
  * message never marks it \Seen behind the caller's back -- a flag changes only by a STORE the caller sends.
@@ -46,6 +48,27 @@ final readonly class FetchItem
         return new self('INTERNALDATE');
     }
 
+    /**
+     * Gmail's id of the message (X-GM-EXT-1): the same in every folder -- every label -- it shows in, where its UID
+     * differs per folder.
+     */
+    public static function gmailMessageId(): self
+    {
+        return new self('X-GM-MSGID');
+    }
+
+    /** Gmail's id of the conversation the message belongs to (X-GM-EXT-1). */
+    public static function gmailThreadId(): self
+    {
+        return new self('X-GM-THRID');
+    }
+
+    /** The message's Gmail labels (X-GM-EXT-1), but the one of the folder it was fetched in. */
+    public static function gmailLabels(): self
+    {
+        return new self('X-GM-LABELS');
+    }
+
     public static function body(?Section $section = null, ?int $from = null, ?int $length = null): self
     {
         $partial = '';
@@ -60,5 +83,11 @@ final readonly class FetchItem
         }
 
         return new self('BODY.PEEK[' . ($section ?? Section::whole())->spec . ']' . $partial);
+    }
+
+    /** Gmail's items need the server to name X-GM-EXT-1; Client refuses them where it does not. */
+    public function isGmail(): bool
+    {
+        return str_starts_with($this->wire, 'X-GM-');
     }
 }
