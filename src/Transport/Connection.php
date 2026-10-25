@@ -268,6 +268,11 @@ final class Connection
     {
         $tag = $this->idleTag ?? throw new LogicException('Not idling.');
         $response = $this->read();
+        if (ResponseKind::UntaggedStatus === $response->kind && 'BYE' === $response->status) {
+            $this->idleTag = $this->renewing = null;
+
+            throw new ConnectionClosed('The server said BYE: ' . $response->text);
+        }
         if (ResponseKind::UntaggedData === $response->kind || ResponseKind::UntaggedStatus === $response->kind) {
             return $response;
         }

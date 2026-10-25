@@ -19,7 +19,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
-- `Watch::failures()` may also hold a `CommandFailed`: a server that refuses a renewal.
+- `Watch::failures()` may also hold a `CommandFailed` (a server that refuses a renewal) or a `TimedOut` (one that
+  stopped answering, met by `remove()`). A BYE while idling drops that client as a `ConnectionClosed` instead of
+  coming back from `wait()` as news.
 
 ## 0.1.0-alpha.3
 

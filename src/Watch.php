@@ -8,6 +8,7 @@ use Closure;
 use CoolMS\Imap\Exception\CommandFailed;
 use CoolMS\Imap\Exception\ConnectionClosed;
 use CoolMS\Imap\Exception\ProtocolError;
+use CoolMS\Imap\Exception\TimedOut;
 use CoolMS\Imap\Protocol\Response;
 use CoolMS\Imap\Transport\IoPoller;
 use CoolMS\Imap\Transport\Poller;
@@ -33,8 +34,8 @@ use function sprintf;
  * DONE, then IDLE again when the server's OK comes, without blocking and without ending the others. A wait never
  * sleeps past the next renewal, and a renewal not answered within `$answerWithin` drops that client as failed.
  *
- * A client whose connection closes, answers what IDLE cannot carry, or refuses a renewal is dropped from the Watch,
- * and named in failures(); the others go on. One client leaves with remove(), all of them with end().
+ * A client whose connection closes (a BYE included), times out, answers what IDLE cannot carry, or refuses a renewal
+ * is dropped from the Watch and named in failures(); the others go on. One client leaves with remove(), all of them with end().
  */
 final class Watch
 {
@@ -47,7 +48,7 @@ final class Watch
     /** @var array<string, float> when each renewal under way was started */
     private array $renewals = [];
 
-    /** @var array<string, ConnectionClosed|ProtocolError|CommandFailed> */
+    /** @var array<string, ConnectionClosed|ProtocolError|CommandFailed|TimedOut> */
     private array $failures = [];
 
     private readonly Closure $now;
@@ -119,7 +120,7 @@ final class Watch
         $this->forget($key);
         try {
             return $client->endIdle();
-        } catch (ConnectionClosed|ProtocolError|CommandFailed $failed) {
+        } catch (ConnectionClosed|ProtocolError|CommandFailed|TimedOut $failed) {
             $this->failures[$key] = $failed;
 
             return [];
@@ -153,7 +154,7 @@ final class Watch
         return array_keys($this->renewals);
     }
 
-    /** @return array<string, ConnectionClosed|ProtocolError|CommandFailed> the clients dropped, and why */
+    /** @return array<string, ConnectionClosed|ProtocolError|CommandFailed|TimedOut> the clients dropped, and why */
     public function failures(): array
     {
         return $this->failures;
@@ -211,7 +212,7 @@ final class Watch
                     $responses[] = $response;
                 }
             } while ($client->buffered());
-        } catch (ConnectionClosed|ProtocolError|CommandFailed $failed) {
+        } catch (ConnectionClosed|ProtocolError|CommandFailed|TimedOut $failed) {
             $this->fail($key, $failed);
 
             return [];
@@ -224,7 +225,7 @@ final class Watch
         return $responses;
     }
 
-    private function fail(string $key, ConnectionClosed|ProtocolError|CommandFailed $failed): void
+    private function fail(string $key, ConnectionClosed|ProtocolError|CommandFailed|TimedOut $failed): void
     {
         $this->failures[$key] = $failed;
         $this->forget($key);
