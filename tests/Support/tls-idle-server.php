@@ -6,7 +6,8 @@ declare(strict_types=1);
 // listens on 127.0.0.1 with the certificate in $argv[1], writes its port to $argv[2], and for one client answers
 // PREAUTH, SELECT, IDLE ("+", then -- unless $argv[3] is "silent" -- two responses in ONE write after 100 ms: one TLS
 // record; with "with-plus", the "+" and one response in one record), DONE and LOGOUT. With "mute-done" it never
-// answers a DONE; with "slow-done" it answers one 300 ms late; with "news-in-renewal" mail arrives inside a renewal. Every line it read goes to $argv[2] . '.read' when the
+// answers a DONE; with "slow-done" it answers one 300 ms late; with "news-in-renewal" mail arrives inside a renewal;
+// with "bye" the server says BYE while the client idles. Every line it read goes to $argv[2] . '.read' when the
 // client leaves.
 
 [, $cert, $portFile, $mode] = $_SERVER['argv'] + [3 => 'two'];
@@ -62,6 +63,10 @@ while (false !== ($line = fgets($client))) {
                 return;
             }
             fwrite($client, "+ idling\r\n");
+            if ('bye' === $mode) {
+                usleep(100_000);
+                fwrite($client, "* BYE shutting down\r\n");
+            }
             if ('two' === $mode) {
                 usleep(100_000);
                 fwrite($client, "* 4 EXISTS\r\n* 5 EXISTS\r\n");

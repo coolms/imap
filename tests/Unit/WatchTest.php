@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace CoolMS\Imap\Tests\Unit;
 
 use CoolMS\Imap\Client;
+use CoolMS\Imap\Exception\ConnectionClosed;
+use CoolMS\Imap\Exception\TimedOut;
 use CoolMS\Imap\Protocol\Response;
 use CoolMS\Imap\Transport\Endpoint;
 use CoolMS\Imap\Transport\IoPoller;
@@ -202,6 +204,32 @@ final class WatchTest extends TestCase
         self::assertSame(['6 EXISTS', '7 EXISTS'], $seen, 'before the DONE\'s OK, and before the new IDLE\'s "+"');
         self::assertSame([], $watch->failures());
         $watch->end();
+    }
+
+    #[Test]
+    public function aServerThatSaysByeWhileIdlingDropsThatClient(): void
+    {
+        $watch = new Watch(new IoPoller());
+        $watch->add('inbox', $this->idlingClientOver('bye'));
+
+        for ($i = 0; $i < 10 && [] === $watch->failures(); ++$i) {
+            $watch->wait(0.2);
+        }
+
+        self::assertInstanceOf(ConnectionClosed::class, $watch->failures()['inbox'] ?? null);
+        self::assertStringContainsString('shutting down', $watch->failures()['inbox']->getMessage());
+        self::assertSame([], $watch->keys());
+    }
+
+    #[Test]
+    public function aClientRemovedFromAServerThatStoppedAnsweringIsATimeOutNotAThrow(): void
+    {
+        $watch = new Watch(new IoPoller());
+        $watch->add('inbox', $this->idlingClientOver('mute-done'));
+
+        self::assertSame([], $watch->remove('inbox'));
+
+        self::assertInstanceOf(TimedOut::class, $watch->failures()['inbox'] ?? null);
     }
 
     #[Test]
