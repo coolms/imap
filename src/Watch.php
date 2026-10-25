@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 namespace CoolMS\Imap;
 
+use Closure;
+use CoolMS\Imap\Exception\CommandFailed;
 use CoolMS\Imap\Exception\ConnectionClosed;
 use CoolMS\Imap\Exception\ProtocolError;
+use CoolMS\Imap\Exception\TimedOut;
 use CoolMS\Imap\Protocol\Response;
 use CoolMS\Imap\Transport\IoPoller;
 use CoolMS\Imap\Transport\Poller;
@@ -13,6 +16,10 @@ use LogicException;
 
 use function array_keys;
 use function array_map;
+use function hrtime;
+use function max;
+use function min;
+use function sprintf;
 
 /**
  * Several clients IDLE at once, each on its own selected folder, and one wait for all of them (RFC 2177): wait()
@@ -23,20 +30,37 @@ use function array_map;
  * would sleep on a response already here. So: a client with buffered bytes is ready at once, no poll; and after a
  * response is read, every one still buffered is read with it.
  *
- * A client whose connection closes or answers what IDLE cannot carry is dropped from the Watch, and named in
- * failures(); the others go on. RFC 2177 asks for IDLE to be re-issued at least every 29 minutes: end() and add()
- * again, under that.
+ * Each client's IDLE is renewed when its own `$renewAfter` is up (RFC 2177 asks for it at least every 29 minutes):
+ * DONE, then IDLE again when the server's OK comes, without blocking and without ending the others. A wait never
+ * sleeps past the next renewal, and a renewal not answered within `$answerWithin` drops that client as failed.
+ *
+ * A client whose connection closes (a BYE included), times out, answers what IDLE cannot carry, or refuses a renewal
+ * is dropped from the Watch and named in failures(); the others go on. One client leaves with remove(), all of them with end().
  */
 final class Watch
 {
     /** @var array<string, Client> */
     private array $clients = [];
 
-    /** @var array<string, ConnectionClosed|ProtocolError> */
+    /** @var array<string, float> when each client's IDLE was entered, in monotonic seconds */
+    private array $since = [];
+
+    /** @var array<string, float> when each renewal under way was started */
+    private array $renewals = [];
+
+    /** @var array<string, ConnectionClosed|ProtocolError|CommandFailed|TimedOut> */
     private array $failures = [];
 
-    public function __construct(private readonly Poller $poller = new IoPoller())
-    {
+    private readonly Closure $now;
+
+    /** @param (Closure(): float)|null $now monotonic seconds; default hrtime */
+    public function __construct(
+        private readonly Poller $poller = new IoPoller(),
+        private readonly float $renewAfter = 28 * 60.0,
+        private readonly float $answerWithin = 30.0,
+        ?Closure $now = null,
+    ) {
+        $this->now = $now ?? static fn (): float => hrtime(true) / 1e9;
     }
 
     /** The client starts to IDLE here, on its selected folder. */
@@ -47,11 +71,19 @@ final class Watch
         }
         $client->beginIdle();
         $this->clients[$key] = $client;
+        $this->since[$key] = ($this->now)();
     }
 
-    /** @return array<string, list<Response>> the responses that came, by key; [] when $seconds passed first */
+    /**
+     * Waits, renews what is due, and reads what came; it changes which clients are watched and renewing.
+     *
+     * @return array<string, list<Response>> the responses that came, by key; [] when $seconds passed first
+     *
+     * @phpstan-impure
+     */
     public function wait(float $seconds): array
     {
+        $this->tend();
         $ready = [];
         foreach ($this->clients as $key => $client) {
             if ($client->buffered()) {
@@ -61,7 +93,7 @@ final class Watch
         if ([] === $ready && [] !== $this->clients) {
             $ready = $this->poller->readable(
                 array_map(static fn (Client $client): mixed => $client->stream(), $this->clients),
-                $seconds,
+                min($seconds, $this->untilNextDeadline()),
             );
         }
         $came = [];
@@ -71,8 +103,28 @@ final class Watch
                 $came[$key] = $responses;
             }
         }
+        $this->tend();
 
         return $came;
+    }
+
+    /**
+     * One client ends its IDLE (DONE) and leaves the Watch; what came after the last wait is returned. A client that
+     * fails as it leaves is named in failures().
+     *
+     * @return list<Response>
+     */
+    public function remove(string $key): array
+    {
+        $client = $this->clients[$key] ?? throw new LogicException('No client is watched as "' . $key . '".');
+        $this->forget($key);
+        try {
+            return $client->endIdle();
+        } catch (ConnectionClosed|ProtocolError|CommandFailed|TimedOut $failed) {
+            $this->failures[$key] = $failed;
+
+            return [];
+        }
     }
 
     /**
@@ -84,35 +136,103 @@ final class Watch
     {
         $last = [];
         foreach (array_keys($this->clients) as $key) {
-            $last[$key] = $this->clients[$key]->endIdle();
-            unset($this->clients[$key]);
+            $last[$key] = $this->remove($key);
         }
 
         return $last;
     }
 
-    /** @return array<string, ConnectionClosed|ProtocolError> the clients dropped, and why */
+    /** @return list<string> the clients watched, by key */
+    public function keys(): array
+    {
+        return array_keys($this->clients);
+    }
+
+    /** @return list<string> the clients whose renewal is under way, by key */
+    public function renewing(): array
+    {
+        return array_keys($this->renewals);
+    }
+
+    /** @return array<string, ConnectionClosed|ProtocolError|CommandFailed|TimedOut> the clients dropped, and why */
     public function failures(): array
     {
         return $this->failures;
+    }
+
+    /** Starts the renewals that are due, and drops the clients whose renewal went unanswered too long. */
+    private function tend(): void
+    {
+        $now = ($this->now)();
+        foreach ($this->clients as $key => $client) {
+            if (isset($this->renewals[$key])) {
+                if ($now - $this->renewals[$key] > $this->answerWithin) {
+                    $this->fail($key, new ConnectionClosed(sprintf(
+                        'The IDLE renewal went unanswered for %.1f s.',
+                        $now - $this->renewals[$key],
+                    )));
+                }
+                continue;
+            }
+            if ($now - $this->since[$key] >= $this->renewAfter) {
+                try {
+                    $client->renewIdle();
+                    $this->renewals[$key] = $now;
+                } catch (ConnectionClosed $failed) {
+                    $this->fail($key, $failed);
+                }
+            }
+        }
+    }
+
+    /** Seconds to the nearest renewal due or renewal answer owed; never below zero. */
+    private function untilNextDeadline(): float
+    {
+        $now = ($this->now)();
+        $next = $this->renewAfter;
+        foreach (array_keys($this->clients) as $key) {
+            $deadline = isset($this->renewals[$key])
+                ? $this->renewals[$key] + $this->answerWithin
+                : $this->since[$key] + $this->renewAfter;
+            $next = min($next, $deadline - $now);
+        }
+
+        return max(0.0, $next);
     }
 
     /** @return list<Response> one response, and every one already buffered behind it */
     private function drain(string $key): array
     {
         $client = $this->clients[$key];
+        $responses = [];
         try {
-            $responses = [$client->idleNext()];
-            while ($client->buffered()) {
-                $responses[] = $client->idleNext();
-            }
-        } catch (ConnectionClosed|ProtocolError $failed) {
-            $this->failures[$key] = $failed;
-            unset($this->clients[$key]);
+            do {
+                $response = $client->idleRead();
+                if (null !== $response) {
+                    $responses[] = $response;
+                }
+            } while ($client->buffered());
+        } catch (ConnectionClosed|ProtocolError|CommandFailed|TimedOut $failed) {
+            $this->fail($key, $failed);
 
             return [];
         }
+        if (isset($this->renewals[$key]) && !$client->renewing()) {
+            unset($this->renewals[$key]);
+            $this->since[$key] = ($this->now)();
+        }
 
         return $responses;
+    }
+
+    private function fail(string $key, ConnectionClosed|ProtocolError|CommandFailed|TimedOut $failed): void
+    {
+        $this->failures[$key] = $failed;
+        $this->forget($key);
+    }
+
+    private function forget(string $key): void
+    {
+        unset($this->clients[$key], $this->since[$key], $this->renewals[$key]);
     }
 }

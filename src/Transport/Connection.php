@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace CoolMS\Imap\Transport;
 
 use Closure;
+use CoolMS\Imap\Exception\CommandFailed;
 use CoolMS\Imap\Exception\ConnectionClosed;
 use CoolMS\Imap\Exception\ProtocolError;
 use CoolMS\Imap\Protocol\Command;
@@ -40,8 +41,15 @@ use function substr;
  */
 final class Connection
 {
+    private const string DONE_SENT = 'done-sent';
+
+    private const string IDLE_ASKED = 'idle-asked';
+
     private int $sent = 0;
     private ?string $idleTag = null;
+
+    /** While an IDLE is renewed without blocking: DONE sent and its completion awaited, or IDLE asked and its "+". */
+    private ?string $renewing = null;
 
     /**
      * @param resource                             $stream
@@ -203,16 +211,99 @@ final class Connection
         return $response;
     }
 
-    /** DONE, and the server's completion of the IDLE, with whatever came between. */
+    /**
+     * DONE, and the server's completion of the IDLE, with whatever came between. During a renewal it finishes what is
+     * under way instead: a DONE already sent is not sent again, and an IDLE already asked for is let in before it ends.
+     */
     public function endIdle(): Reply
     {
         $tag = $this->idleTag ?? throw new LogicException('Not idling.');
-        $this->idleTag = null;
-        $this->log('C', 'DONE');
-        $this->send("DONE\r\n");
         $untagged = [];
+        if (self::IDLE_ASKED === $this->renewing) {
+            $plus = $this->until($tag, $untagged, true);
+            if (ResponseKind::Tagged === $plus->kind) {
+                $this->idleTag = $this->renewing = null;
+
+                return new Reply($plus, $untagged);
+            }
+        }
+        if (self::DONE_SENT !== $this->renewing) {
+            $this->log('C', 'DONE');
+            $this->send("DONE\r\n");
+        }
+        $this->idleTag = $this->renewing = null;
 
         return new Reply($this->until($tag, $untagged, false), $untagged);
+    }
+
+    /**
+     * Renews the IDLE without waiting (RFC 2177 asks for one at least every 29 minutes): DONE is sent here, and
+     * {@see idleRead()} takes the completion, asks for IDLE again and takes its "+" as they come.
+     */
+    public function renewIdle(): void
+    {
+        if (null === $this->idleTag) {
+            throw new LogicException('Not idling.');
+        }
+        if (null !== $this->renewing) {
+            return;
+        }
+        $this->log('C', 'DONE');
+        $this->send("DONE\r\n");
+        $this->renewing = self::DONE_SENT;
+    }
+
+    /** Whether a renewal is under way: its DONE or its new IDLE not answered yet. */
+    public function renewing(): bool
+    {
+        return null !== $this->renewing;
+    }
+
+    /**
+     * The next response while idling or renewing: an untagged one, or null for a step of the renewal (the DONE's
+     * completion, after which IDLE is asked for again, or the new IDLE's "+"). It blocks until one comes. A renewal
+     * the server refuses is a CommandFailed, and nothing is idling.
+     */
+    public function idleRead(): ?Response
+    {
+        $tag = $this->idleTag ?? throw new LogicException('Not idling.');
+        $response = $this->read();
+        if (ResponseKind::UntaggedStatus === $response->kind && 'BYE' === $response->status) {
+            $this->idleTag = $this->renewing = null;
+
+            throw new ConnectionClosed('The server said BYE: ' . $response->text);
+        }
+        if (ResponseKind::UntaggedData === $response->kind || ResponseKind::UntaggedStatus === $response->kind) {
+            return $response;
+        }
+        if (self::DONE_SENT === $this->renewing && ResponseKind::Tagged === $response->kind && $tag === $response->tag) {
+            if ('OK' !== $response->status) {
+                $this->idleTag = $this->renewing = null;
+
+                throw new CommandFailed('IDLE', $response);
+            }
+            $next = $this->idleTag = $this->tag();
+            $this->log('C', $next . ' IDLE');
+            $this->send($next . " IDLE\r\n");
+            $this->renewing = self::IDLE_ASKED;
+
+            return null;
+        }
+        if (self::IDLE_ASKED === $this->renewing) {
+            if (ResponseKind::Continuation === $response->kind) {
+                $this->renewing = null;
+
+                return null;
+            }
+            // Tagged, then: the new IDLE refused.
+            if ($tag === $response->tag) {
+                $this->idleTag = $this->renewing = null;
+
+                throw new CommandFailed('IDLE', $response);
+            }
+        }
+
+        throw new ProtocolError($response->text, 0, 'only untagged responses come during IDLE');
     }
 
     /**

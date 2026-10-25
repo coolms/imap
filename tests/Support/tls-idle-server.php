@@ -5,8 +5,10 @@ declare(strict_types=1);
 // A TLS server for the Watch's tests, run as its own process (the TLS handshake needs both ends moving at once):
 // listens on 127.0.0.1 with the certificate in $argv[1], writes its port to $argv[2], and for one client answers
 // PREAUTH, SELECT, IDLE ("+", then -- unless $argv[3] is "silent" -- two responses in ONE write after 100 ms: one TLS
-// record; with "with-plus", the "+" and one response in one record), DONE and LOGOUT. Every line it read goes to
-// $argv[2] . '.read' when the client leaves.
+// record; with "with-plus", the "+" and one response in one record), DONE and LOGOUT. With "mute-done" it never
+// answers a DONE; with "slow-done" it answers one 300 ms late; with "news-in-renewal" mail arrives inside a renewal;
+// with "bye" the server says BYE while the client idles. Every line it read goes to $argv[2] . '.read' when the
+// client leaves.
 
 [, $cert, $portFile, $mode] = $_SERVER['argv'] + [3 => 'two'];
 $server = stream_socket_server(
@@ -32,13 +34,22 @@ while (false !== ($line = fgets($client))) {
     $line = rtrim($line, "\r\n");
     $read[] = $line;
     if ('DONE' === $line) {
-        fwrite($client, "{$idleTag} OK IDLE terminated\r\n");
+        if ('mute-done' === $mode) {
+            continue;
+        }
+        if ('slow-done' === $mode) {
+            usleep(300_000);
+        }
+        // "news-in-renewal": mail arrives between the DONE and its completion, and again before the new IDLE's "+".
+        $news = 'news-in-renewal' === $mode ? "* 6 EXISTS\r\n" : '';
+        fwrite($client, "{$news}{$idleTag} OK IDLE terminated\r\n");
         continue;
     }
     [$tag, $command] = explode(' ', $line . ' ', 3);
     match (strtoupper($command)) {
         'SELECT' => fwrite($client, "* 3 EXISTS\r\n* OK [UIDVALIDITY 1] valid\r\n{$tag} OK [READ-WRITE] selected\r\n"),
         'IDLE' => (static function () use ($client, $tag, $mode, &$idleTag): void {
+            $renewal = null !== $idleTag;
             $idleTag = $tag;
             if ('with-plus' === $mode) {
                 // The "+" and a response in ONE record: starting IDLE reads the "+", the response stays buffered.
@@ -46,8 +57,17 @@ while (false !== ($line = fgets($client))) {
 
                 return;
             }
+            if ('news-in-renewal' === $mode && $renewal) {
+                fwrite($client, "* 7 EXISTS\r\n+ idling\r\n");
+
+                return;
+            }
             fwrite($client, "+ idling\r\n");
-            if ('silent' !== $mode) {
+            if ('bye' === $mode) {
+                usleep(100_000);
+                fwrite($client, "* BYE shutting down\r\n");
+            }
+            if ('two' === $mode) {
                 usleep(100_000);
                 fwrite($client, "* 4 EXISTS\r\n* 5 EXISTS\r\n");
             }
