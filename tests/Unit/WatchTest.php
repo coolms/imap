@@ -187,6 +187,24 @@ final class WatchTest extends TestCase
     }
 
     #[Test]
+    public function mailThatArrivesDuringARenewalIsStillReported(): void
+    {
+        $watch = new Watch(new IoPoller(), renewAfter: 0.1, answerWithin: 2.0);
+        $watch->add('inbox', $this->idlingClientOver('news-in-renewal'));
+        usleep(150_000);
+
+        $seen = [];
+        $left = 20;
+        do {
+            $seen = array_merge($seen, self::texts($watch->wait(0.05)['inbox'] ?? []));
+        } while ((count($seen) < 2 || [] !== $watch->renewing()) && --$left > 0);
+
+        self::assertSame(['6 EXISTS', '7 EXISTS'], $seen, 'before the DONE\'s OK, and before the new IDLE\'s "+"');
+        self::assertSame([], $watch->failures());
+        $watch->end();
+    }
+
+    #[Test]
     public function aWaitNeverSleepsPastTheNextRenewal(): void
     {
         $poller = new class implements Poller {
