@@ -429,6 +429,27 @@ final class Client
         return $reply->untagged;
     }
 
+    /** Renews the IDLE without waiting: DONE now, and the rest through {@see idleRead()} (see Connection::renewIdle()). */
+    public function renewIdle(): void
+    {
+        $this->connection()->renewIdle();
+    }
+
+    /** Whether a renewal is under way: its DONE or its new IDLE not answered yet. */
+    public function renewing(): bool
+    {
+        return $this->connection()->renewing();
+    }
+
+    /**
+     * The next response while idling, or null for a step of a renewal; it blocks until something comes, so a Watch
+     * asks only when something is there. A refused renewal is a CommandFailed.
+     */
+    public function idleRead(): ?Response
+    {
+        return $this->connection()->idleRead();
+    }
+
     /** Whether a response is already read off the socket and waiting in PHP's buffer (see Connection::buffered()). */
     public function buffered(): bool
     {

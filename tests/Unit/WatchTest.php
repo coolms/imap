@@ -175,9 +175,10 @@ final class WatchTest extends TestCase
 
         $watch->wait(0.15);
         self::assertSame(['early'], $watch->renewing(), 'only the one whose time is up');
-        for ($i = 0; $i < 10 && [] !== $watch->renewing(); ++$i) {
+        $left = 10;
+        do {
             $watch->wait(0.05);
-        }
+        } while ([] !== $watch->renewing() && --$left > 0);
         self::assertSame([], $watch->renewing(), 'the renewal answered: idling again');
         self::assertSame([], $watch->failures());
         $watch->end();
@@ -296,11 +297,14 @@ final class WatchTest extends TestCase
     private function idleLines(int $server): array
     {
         $read = $this->files[$server * 3 + 2];
-        for ($i = 0; $i < 100 && !is_file($read); ++$i) {
+        // The server writes the file as its client leaves: wait for its content, not only for the file to exist.
+        $content = '';
+        for ($i = 0; $i < 100 && '' === $content; ++$i) {
             usleep(20_000);
+            $content = is_file($read) ? (string) file_get_contents($read) : '';
         }
         $lines = [];
-        foreach (explode("\n", (string) file_get_contents($read)) as $line) {
+        foreach (explode("\n", $content) as $line) {
             $word = 'DONE' === $line ? 'DONE' : (explode(' ', $line . ' ')[1] ?? '');
             if ('IDLE' === strtoupper($word) || 'DONE' === $word) {
                 $lines[] = strtoupper($word);

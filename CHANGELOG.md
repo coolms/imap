@@ -5,6 +5,22 @@ All notable changes to `coolms/imap` are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/). Before 1.0.0, a minor version may break the API.
 
+## Unreleased
+
+### Added
+
+- `Watch` renews and removes one client at a time. Each client's IDLE is renewed when its own `$renewAfter` is up
+  (28 minutes by default; RFC 2177 asks for at least every 29): DONE, then IDLE again when the OK comes, without
+  blocking and without ending the others. A wait never sleeps past the next renewal, and a renewal not answered within
+  `$answerWithin` (30 s by default) drops that client into `failures()`. `remove($key)` ends one client's IDLE and
+  lets it go while the others go on; `keys()` and `renewing()` say which are watched and which are renewing.
+- `Client::renewIdle()`, `renewing()` and `idleRead()`: an IDLE renewed in pieces, for `Watch`. A client removed while
+  its DONE is unanswered sends no second DONE, and one removed while its new IDLE is asked for is let in first.
+
+### Changed
+
+- `Watch::failures()` may also hold a `CommandFailed`: a server that refuses a renewal.
+
 ## 0.1.0-alpha.3
 
 ### Added
