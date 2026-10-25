@@ -17,8 +17,10 @@ use OpenSSLCertificateSigningRequest;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
+use function array_keys;
 use function array_map;
 use function array_merge;
+use function explode;
 use function file_get_contents;
 use function file_put_contents;
 use function hrtime;
@@ -32,6 +34,7 @@ use function proc_close;
 use function proc_open;
 use function stream_context_create;
 use function stream_socket_client;
+use function strtoupper;
 use function sys_get_temp_dir;
 use function tempnam;
 use function trim;
@@ -161,6 +164,105 @@ final class WatchTest extends TestCase
         $watch->end();
     }
 
+    #[Test]
+    public function eachClientIsRenewedWhenItsOwnTimeIsUpWithoutEndingTheOthers(): void
+    {
+        $early = $this->idlingClientOver('silent');
+        $watch = new Watch(new IoPoller(), renewAfter: 0.3, answerWithin: 2.0);
+        $watch->add('early', $early);
+        usleep(200_000);
+        $watch->add('late', $this->idlingClientOver('silent'));
+
+        $watch->wait(0.15);
+        self::assertSame(['early'], $watch->renewing(), 'only the one whose time is up');
+        for ($i = 0; $i < 10 && [] !== $watch->renewing(); ++$i) {
+            $watch->wait(0.05);
+        }
+        self::assertSame([], $watch->renewing(), 'the renewal answered: idling again');
+        self::assertSame([], $watch->failures());
+        $watch->end();
+        $early->logout();
+        self::assertSame(['IDLE', 'DONE', 'IDLE', 'DONE'], $this->idleLines(0), 'DONE, then IDLE again, on its own');
+    }
+
+    #[Test]
+    public function aWaitNeverSleepsPastTheNextRenewal(): void
+    {
+        $poller = new class implements Poller {
+            /** @var list<float> */
+            public array $asked = [];
+
+            public function readable(array $streams, float $seconds): array
+            {
+                $this->asked[] = $seconds;
+
+                return [];
+            }
+        };
+        $watch = new Watch($poller, renewAfter: 0.25, answerWithin: 2.0);
+        $watch->add('inbox', $this->idlingClientOver('silent'));
+
+        $watch->wait(30.0);
+
+        self::assertCount(1, $poller->asked);
+        self::assertLessThanOrEqual(0.25, $poller->asked[0], 'woken for the renewal, not after the whole wait');
+        $watch->end();
+    }
+
+    #[Test]
+    public function aRenewalTheServerNeverAnswersDropsThatClientAsFailed(): void
+    {
+        $watch = new Watch(new IoPoller(), renewAfter: 0.1, answerWithin: 0.3);
+        $watch->add('mute', $this->idlingClientOver('mute-done'));
+        $watch->add('fine', $this->idlingClientOver('silent'));
+
+        for ($i = 0; $i < 20 && [] === $watch->failures(); ++$i) {
+            $watch->wait(0.05);
+        }
+
+        self::assertSame(['mute'], array_keys($watch->failures()));
+        self::assertStringContainsString('unanswered', $watch->failures()['mute']->getMessage());
+        self::assertSame(['fine'], $watch->keys(), 'the other goes on');
+        $watch->end();
+    }
+
+    #[Test]
+    public function oneClientIsRemovedAndTheOthersGoOn(): void
+    {
+        $watch = new Watch(new IoPoller());
+        $gone = $this->idlingClientOver('silent');
+        $watch->add('gone', $gone);
+        $watch->add('stays', $this->idlingClientOver('two'));
+
+        self::assertSame([], $watch->remove('gone'));
+        $gone->logout();
+        $seen = [];
+        for ($i = 0; $i < 3 && count($seen) < 2; ++$i) {
+            $seen = array_merge($seen, self::texts($watch->wait(1.0)['stays'] ?? []));
+        }
+
+        self::assertSame(['stays'], $watch->keys());
+        self::assertSame(['4 EXISTS', '5 EXISTS'], $seen);
+        $watch->end();
+        self::assertSame(['IDLE', 'DONE'], $this->idleLines(0), 'the removed one ended its IDLE');
+    }
+
+    #[Test]
+    public function aClientRemovedWhileItsRenewalIsUnansweredSendsNoSecondDone(): void
+    {
+        $watch = new Watch(new IoPoller(), renewAfter: 0.1, answerWithin: 2.0);
+        $client = $this->idlingClientOver('slow-done');
+        $watch->add('inbox', $client);
+        usleep(150_000);
+        $watch->wait(0.01);
+        self::assertSame(['inbox'], $watch->renewing(), 'DONE sent, its answer 300 ms away');
+
+        $watch->remove('inbox');
+        $client->logout();
+
+        self::assertSame(['IDLE', 'DONE'], $this->idleLines(0));
+    }
+
     protected function tearDown(): void
     {
         foreach ($this->processes as $process) {
@@ -184,6 +286,28 @@ final class WatchTest extends TestCase
             static fn (Response $r): string => trim($r->data[0]->string() . ' ' . $r->data[1]->string()),
             $responses,
         );
+    }
+
+    /**
+     * The IDLE and DONE lines the n-th test server read, once its client has left.
+     *
+     * @return list<string>
+     */
+    private function idleLines(int $server): array
+    {
+        $read = $this->files[$server * 3 + 2];
+        for ($i = 0; $i < 100 && !is_file($read); ++$i) {
+            usleep(20_000);
+        }
+        $lines = [];
+        foreach (explode("\n", (string) file_get_contents($read)) as $line) {
+            $word = 'DONE' === $line ? 'DONE' : (explode(' ', $line . ' ')[1] ?? '');
+            if ('IDLE' === strtoupper($word) || 'DONE' === $word) {
+                $lines[] = strtoupper($word);
+            }
+        }
+
+        return $lines;
     }
 
     private function idlingClientOver(string $mode): Client
