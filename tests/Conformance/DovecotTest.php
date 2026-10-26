@@ -25,6 +25,7 @@ use function array_values;
 use function bin2hex;
 use function count;
 use function getenv;
+use function ksort;
 use function random_bytes;
 use function sort;
 use function strlen;
@@ -170,6 +171,8 @@ final class DovecotTest extends TestCase
             }
         }
         $watch->end();
+        // Two connections: which one's EXISTS comes first is the servers', not the order they were added in.
+        ksort($heard);
 
         self::assertSame(['inbox' => true, 'sent' => true], $heard, 'each folder\'s EXISTS, through one wait');
         self::assertSame([], $watch->failures());
