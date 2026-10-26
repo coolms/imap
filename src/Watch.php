@@ -72,6 +72,8 @@ final class Watch
         $client->beginIdle();
         $this->clients[$key] = $client;
         $this->since[$key] = ($this->now)();
+        // A failure belongs to the client that had it: a new client under the key starts clean.
+        unset($this->failures[$key]);
     }
 
     /**
