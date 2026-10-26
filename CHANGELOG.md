@@ -5,6 +5,13 @@ All notable changes to `coolms/imap` are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/). Before 1.0.0, a minor version may break the API.
 
+## Unreleased
+
+### Fixed
+
+- `Watch::add()` forgets the failure a key's previous client left: a client added under a key that failed no longer
+  shows that failure in `failures()`, so a caller that reopens a failed mailbox is not told the new one failed.
+
 ## 0.1.0-alpha.5
 
 ### Added
