@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace CoolMS\Imap\Tests\Conformance;
 
 use CoolMS\Imap\Client;
+use CoolMS\Imap\Exception\FolderNotEmpty;
 use CoolMS\Imap\Transport\Endpoint;
 use CoolMS\Imap\Transport\Security;
 use CoolMS\Imap\Value\Capability;
@@ -14,6 +15,7 @@ use CoolMS\Imap\Value\UidSet;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
+use function array_map;
 use function bin2hex;
 use function getenv;
 use function random_bytes;
@@ -54,6 +56,29 @@ final class GreenmailTest extends TestCase
         self::assertCount(1, $folders);
         self::assertSame('INBOX', $folders[0]->name->wire);
         self::assertSame('.', $folders[0]->delimiter, 'greenmail\'s delimiter is not Dovecot\'s');
+    }
+
+    #[Test]
+    public function aFolderIsCreatedRenamedAndDeletedWhenEmptyButNotWithMail(): void
+    {
+        $client = $this->signedIn();
+        $client->create(FolderName::fromWire('Projects'));
+        $client->rename(FolderName::fromWire('Projects'), FolderName::fromWire('Projects 2026'));
+        $client->append(FolderName::fromWire('Projects 2026'), "Subject: kept\r\n\r\nbody\r\n");
+
+        try {
+            $client->deleteEmpty(FolderName::fromWire('Projects 2026'));
+            self::fail('a folder holding mail is not deleted');
+        } catch (FolderNotEmpty $notEmpty) {
+            self::assertSame(1, $notEmpty->messages);
+        }
+        self::assertSame(1, $client->counts(FolderName::fromWire('Projects 2026'))->messages, 'put back with its mail');
+
+        $client->create(FolderName::fromWire('Empty'));
+        $client->deleteEmpty(FolderName::fromWire('Empty'));
+        $names = array_map(static fn ($folder) => $folder->name->wire, $client->folders());
+        self::assertNotContains('Empty', $names);
+        self::assertContains('Projects 2026', $names);
     }
 
     private function signedIn(): Client

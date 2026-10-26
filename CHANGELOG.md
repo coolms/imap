@@ -5,6 +5,20 @@ All notable changes to `coolms/imap` are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/). Before 1.0.0, a minor version may break the API.
 
+## Unreleased
+
+### Added
+
+- `Client::create()`, `rename()`, `subscribe()` and `unsubscribe()` (RFC 9051 s.6.3.4, 6.3.6, 6.3.7, 6.3.8). A server's
+  refusal is a `CommandFailed` carrying its code, such as `[ALREADYEXISTS]` or `[NONEXISTENT]`. The INBOX is never
+  renamed: that moves its mail to a new folder.
+- `Client::deleteEmpty()`: a folder is deleted only when it holds nothing, since a server deletes a folder's mail
+  with it. The folder is first renamed to a name only this client knows, so no other client can put mail in it while
+  it is looked at, and deleted when it holds no message and no folder there. Otherwise it is put back under its own
+  name and `FolderNotEmpty` says what it holds (and, if it could not be put back, where it is). When the look or the
+  delete itself fails, the folder is put back and that failure is thrown; if it cannot be put back, `FolderLeftAside`
+  says where it is.
+
 ## 0.1.0-alpha.4
 
 ### Added

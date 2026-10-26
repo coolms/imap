@@ -6,6 +6,8 @@ namespace CoolMS\Imap;
 
 use Closure;
 use CoolMS\Imap\Exception\CommandFailed;
+use CoolMS\Imap\Exception\FolderLeftAside;
+use CoolMS\Imap\Exception\FolderNotEmpty;
 use CoolMS\Imap\Exception\ProtocolError;
 use CoolMS\Imap\Protocol\Argument;
 use CoolMS\Imap\Protocol\Command;
@@ -32,13 +34,18 @@ use CoolMS\Imap\Value\UidSet;
 use CoolMS\Imap\Value\Vanished;
 use LogicException;
 use SensitiveParameter;
+use Throwable;
 
 use function array_filter;
 use function array_map;
 use function array_slice;
 use function array_values;
+use function bin2hex;
 use function count;
 use function in_array;
+use function max;
+use function random_bytes;
+use function sprintf;
 use function str_starts_with;
 use function strcasecmp;
 use function strtoupper;
@@ -180,6 +187,77 @@ final class Client
         $command = new Command($readOnly ? 'EXAMINE' : 'SELECT', Argument::folder($folder));
 
         return $this->selected = SelectedFolder::fromReply($this->ok($command));
+    }
+
+    /** CREATE a folder (RFC 9051 s.6.3.4); a server's refusal, such as [ALREADYEXISTS], is a CommandFailed. */
+    public function create(FolderName $folder): void
+    {
+        $this->authenticatedOnly();
+        $this->ok(new Command('CREATE', Argument::folder($folder)));
+    }
+
+    /**
+     * RENAME a folder, with the folders inside it (RFC 9051 s.6.3.6). Never the INBOX: renaming it moves its mail to a
+     * new folder and leaves an empty INBOX, which no caller of this library means.
+     */
+    public function rename(FolderName $from, FolderName $to): void
+    {
+        $this->authenticatedOnly();
+        self::notTheInbox($from, 'renamed');
+        $this->ok(new Command('RENAME', Argument::folder($from), Argument::folder($to)));
+    }
+
+    public function subscribe(FolderName $folder): void
+    {
+        $this->authenticatedOnly();
+        $this->ok(new Command('SUBSCRIBE', Argument::folder($folder)));
+    }
+
+    public function unsubscribe(FolderName $folder): void
+    {
+        $this->authenticatedOnly();
+        $this->ok(new Command('UNSUBSCRIBE', Argument::folder($folder)));
+    }
+
+    /**
+     * DELETE a folder only when it holds nothing: a server deletes a folder's mail with it (RFC 9051 s.6.3.5), and this
+     * library deletes no mail. The folder is first renamed to a name only this client knows, so no other client can put
+     * mail in it while it is looked at; it is deleted when it holds no message and no folder there, and otherwise put
+     * back under its own name and reported as FolderNotEmpty.
+     */
+    public function deleteEmpty(FolderName $folder): void
+    {
+        $this->authenticatedOnly();
+        self::notTheInbox($folder, 'deleted');
+        $aside = FolderName::fromWire('coolms-removing-' . bin2hex(random_bytes(8)));
+        $this->ok(new Command('RENAME', Argument::folder($folder), Argument::folder($aside)));
+        try {
+            $listed = $this->ok(new Command('LIST', Argument::text(''), Argument::text($aside->wire . '*')))->data('LIST');
+            $inside = max(0, count($listed) - 1);
+            $messages = null;
+            if (0 === $inside) {
+                $status = $this->ok(new Command('STATUS', Argument::folder($aside), Argument::list(Argument::atom('MESSAGES'))))
+                    ->data('STATUS');
+                $messages = [] === $status ? null : FolderCounts::fromStatus($status[0])->messages;
+            }
+            if (0 === $inside && 0 === $messages) {
+                $this->ok(new Command('DELETE', Argument::folder($aside)));
+
+                return;
+            }
+        } catch (Throwable $failed) {
+            // The look or the delete failed: the folder goes back under its own name, and the failure is said.
+            $this->putBack($folder, $aside, $failed);
+
+            throw $failed;
+        }
+        try {
+            $this->ok(new Command('RENAME', Argument::folder($aside), Argument::folder($folder)));
+        } catch (CommandFailed) {
+            throw new FolderNotEmpty($folder, $messages ?? 0, $inside, $aside);
+        }
+
+        throw new FolderNotEmpty($folder, $messages ?? 0, $inside);
     }
 
     /**
@@ -470,6 +548,23 @@ final class Client
     public function logout(): void
     {
         $this->connection()->run(new Command('LOGOUT'));
+    }
+
+    private static function notTheInbox(FolderName $folder, string $what): void
+    {
+        if (0 === strcasecmp($folder->wire, 'INBOX')) {
+            throw new LogicException(sprintf('The INBOX is never %s.', $what));
+        }
+    }
+
+    /** Puts a folder renamed aside back under its own name; when that fails too, says where it is. */
+    private function putBack(FolderName $folder, FolderName $aside, Throwable $failed): void
+    {
+        try {
+            $this->ok(new Command('RENAME', Argument::folder($aside), Argument::folder($folder)));
+        } catch (Throwable) {
+            throw new FolderLeftAside($folder, $aside, $failed);
+        }
     }
 
     private function signedIn(string $command, Reply $reply): void
