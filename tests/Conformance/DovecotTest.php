@@ -263,7 +263,7 @@ final class DovecotTest extends TestCase
         }
 
         self::assertSame(1, $client->counts(FolderName::fromWire('Kept'))->messages);
-        self::assertSame(['INBOX', 'Drafts', 'Junk', 'Kept', 'Sent', 'Trash'], self::sortedNames($client), 'nothing left aside');
+        self::assertSame(['Drafts', 'INBOX', 'Junk', 'Kept', 'Sent', 'Trash'], self::sortedNames($client), 'nothing left aside');
     }
 
     /** The measurement for deleting into Trash: a folder, with its mail, can be moved under Trash and back. */
