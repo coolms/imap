@@ -222,6 +222,23 @@ final class WatchTest extends TestCase
     }
 
     #[Test]
+    public function aClientAddedUnderAFailedKeyStartsWithoutTheOldFailure(): void
+    {
+        $watch = new Watch(new IoPoller());
+        $watch->add('inbox', $this->idlingClientOver('bye'));
+        for ($i = 0; $i < 10 && [] === $watch->failures(); ++$i) {
+            $watch->wait(0.2);
+        }
+        self::assertArrayHasKey('inbox', $watch->failures());
+
+        $watch->add('inbox', $this->idlingClientOver('silent'));
+
+        self::assertArrayNotHasKey('inbox', $watch->failures(), 'the new client is not failed by the old one\'s loss');
+        self::assertSame(['inbox'], $watch->keys());
+        $watch->end();
+    }
+
+    #[Test]
     public function aClientRemovedFromAServerThatStoppedAnsweringIsATimeOutNotAThrow(): void
     {
         $watch = new Watch(new IoPoller());
