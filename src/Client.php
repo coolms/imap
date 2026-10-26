@@ -182,6 +182,31 @@ final class Client
         return $this->selected = SelectedFolder::fromReply($this->ok($command));
     }
 
+    public function create(FolderName $folder): void
+    {
+        throw new \RuntimeException('not built');
+    }
+
+    public function rename(FolderName $from, FolderName $to): void
+    {
+        throw new \RuntimeException('not built');
+    }
+
+    public function subscribe(FolderName $folder): void
+    {
+        throw new \RuntimeException('not built');
+    }
+
+    public function unsubscribe(FolderName $folder): void
+    {
+        throw new \RuntimeException('not built');
+    }
+
+    public function deleteEmpty(FolderName $folder): void
+    {
+        throw new \RuntimeException('not built');
+    }
+
     /**
      * APPEND a message to a folder (RFC 9051 s.6.3.12); with UIDPLUS (RFC 4315) the UID it got, from [APPENDUID
      * uidvalidity uid] -- null when the server did not say.
