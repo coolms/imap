@@ -6,6 +6,7 @@ namespace CoolMS\Imap\Tests\Unit;
 
 use CoolMS\Imap\Client;
 use CoolMS\Imap\Exception\CommandFailed;
+use CoolMS\Imap\Exception\FolderLeftAside;
 use CoolMS\Imap\Exception\FolderNotEmpty;
 use CoolMS\Imap\Transport\Endpoint;
 use CoolMS\Imap\Transport\Opener;
@@ -160,6 +161,49 @@ final class ClientFoldersTest extends TestCase
         } catch (FolderNotEmpty $notEmpty) {
             self::assertNotNull($notEmpty->leftAt);
             self::assertStringStartsWith('coolms-removing-', $notEmpty->leftAt->wire);
+        }
+    }
+
+    #[Test]
+    public function aLookThatFailsPutsTheFolderBackAndSaysWhy(): void
+    {
+        $client = $this->signedIn(
+            "a2 OK renamed\r\n"
+            . "* LIST () \"/\" coolms-removing-x\r\na3 OK\r\n"
+            . "a4 NO [CANNOT] not selectable\r\n"
+            . "a5 OK renamed back\r\n",
+        );
+
+        try {
+            $client->deleteEmpty(FolderName::fromWire('Projects'));
+            self::fail('a refused STATUS stops the delete');
+        } catch (CommandFailed $failed) {
+            self::assertSame('CANNOT', $failed->code());
+        }
+
+        $written = $this->afterSignIn();
+        self::assertStringNotContainsString('DELETE', $written);
+        self::assertSame(1, preg_match('~a5 RENAME "coolms-removing-[0-9a-f]{16}" "Projects"\r\n$~', $written), $written);
+    }
+
+    #[Test]
+    public function aRefusedDeleteThatCannotBePutBackSaysWhereTheFolderIs(): void
+    {
+        $client = $this->signedIn(
+            "a2 OK renamed\r\n"
+            . "* LIST () \"/\" coolms-removing-x\r\na3 OK\r\n"
+            . "* STATUS coolms-removing-x (MESSAGES 0)\r\na4 OK\r\n"
+            . "a5 NO [INUSE] in use\r\n"
+            . "a6 NO [ALREADYEXISTS] taken meanwhile\r\n",
+        );
+
+        try {
+            $client->deleteEmpty(FolderName::fromWire('Projects'));
+            self::fail('a refused DELETE that cannot be undone says where the folder is');
+        } catch (FolderLeftAside $aside) {
+            self::assertStringStartsWith('coolms-removing-', $aside->leftAt->wire);
+            self::assertInstanceOf(CommandFailed::class, $aside->getPrevious());
+            self::assertSame('INUSE', $aside->getPrevious()->code());
         }
     }
 
