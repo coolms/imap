@@ -6,6 +6,7 @@ namespace CoolMS\Imap;
 
 use Closure;
 use CoolMS\Imap\Exception\CommandFailed;
+use CoolMS\Imap\Exception\FolderLeftAside;
 use CoolMS\Imap\Exception\FolderNotEmpty;
 use CoolMS\Imap\Exception\ProtocolError;
 use CoolMS\Imap\Protocol\Argument;
@@ -33,6 +34,7 @@ use CoolMS\Imap\Value\UidSet;
 use CoolMS\Imap\Value\Vanished;
 use LogicException;
 use SensitiveParameter;
+use Throwable;
 
 use function array_filter;
 use function array_map;
@@ -229,18 +231,25 @@ final class Client
         self::notTheInbox($folder, 'deleted');
         $aside = FolderName::fromWire('coolms-removing-' . bin2hex(random_bytes(8)));
         $this->ok(new Command('RENAME', Argument::folder($folder), Argument::folder($aside)));
-        $listed = $this->ok(new Command('LIST', Argument::text(''), Argument::text($aside->wire . '*')))->data('LIST');
-        $inside = max(0, count($listed) - 1);
-        $messages = null;
-        if (0 === $inside) {
-            $status = $this->ok(new Command('STATUS', Argument::folder($aside), Argument::list(Argument::atom('MESSAGES'))))
-                ->data('STATUS');
-            $messages = [] === $status ? null : FolderCounts::fromStatus($status[0])->messages;
-        }
-        if (0 === $inside && 0 === $messages) {
-            $this->ok(new Command('DELETE', Argument::folder($aside)));
+        try {
+            $listed = $this->ok(new Command('LIST', Argument::text(''), Argument::text($aside->wire . '*')))->data('LIST');
+            $inside = max(0, count($listed) - 1);
+            $messages = null;
+            if (0 === $inside) {
+                $status = $this->ok(new Command('STATUS', Argument::folder($aside), Argument::list(Argument::atom('MESSAGES'))))
+                    ->data('STATUS');
+                $messages = [] === $status ? null : FolderCounts::fromStatus($status[0])->messages;
+            }
+            if (0 === $inside && 0 === $messages) {
+                $this->ok(new Command('DELETE', Argument::folder($aside)));
 
-            return;
+                return;
+            }
+        } catch (Throwable $failed) {
+            // The look or the delete failed: the folder goes back under its own name, and the failure is said.
+            $this->putBack($folder, $aside, $failed);
+
+            throw $failed;
         }
         try {
             $this->ok(new Command('RENAME', Argument::folder($aside), Argument::folder($folder)));
@@ -545,6 +554,16 @@ final class Client
     {
         if (0 === strcasecmp($folder->wire, 'INBOX')) {
             throw new LogicException(sprintf('The INBOX is never %s.', $what));
+        }
+    }
+
+    /** Puts a folder renamed aside back under its own name; when that fails too, says where it is. */
+    private function putBack(FolderName $folder, FolderName $aside, Throwable $failed): void
+    {
+        try {
+            $this->ok(new Command('RENAME', Argument::folder($aside), Argument::folder($folder)));
+        } catch (Throwable) {
+            throw new FolderLeftAside($folder, $aside, $failed);
         }
     }
 
