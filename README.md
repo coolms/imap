@@ -13,7 +13,8 @@ mail as it arrives, and never lose a change another client made in between.
 - **TLS verified, always.** Implicit TLS or STARTTLS, the certificate checked against the server's name. STARTTLS is
   never skipped when it was asked for, and bytes slipped in before the handshake are refused.
 - **It never deletes mail.** No EXPUNGE is ever sent and `\Deleted` is never stored; a message leaves a folder only
-  by MOVE.
+  by MOVE. A folder is deleted only when it is empty, checked under a name no other client knows (`deleteEmpty()`).
+- **Folders** created, renamed (with the folders inside) and subscribed to.
 - **Bounded.** Response lines and literals have limits checked before they are read into memory; UID sets are kept as
   ranges, never expanded.
 - **No framework.** PHP 8.5 with `ext-ctype` and `ext-openssl`, and two Symfony polyfills: `Io\Poll` and

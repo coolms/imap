@@ -6,6 +6,7 @@ namespace CoolMS\Imap\Tests\Conformance;
 
 use CoolMS\Imap\Client;
 use CoolMS\Imap\Exception\CouldNotOpen;
+use CoolMS\Imap\Exception\FolderNotEmpty;
 use CoolMS\Imap\Protocol\Response;
 use CoolMS\Imap\Transport\Endpoint;
 use CoolMS\Imap\Transport\Security;
@@ -18,7 +19,9 @@ use CoolMS\Imap\Watch;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 
+use function array_filter;
 use function array_map;
+use function array_values;
 use function bin2hex;
 use function count;
 use function getenv;
@@ -228,9 +231,77 @@ final class DovecotTest extends TestCase
         }
     }
 
+    #[Test]
+    public function aFolderIsCreatedRenamedAndDeletedWhenEmpty(): void
+    {
+        $client = $this->signedIn();
+
+        $client->create(FolderName::fromDisplay('Отчёты'));
+        $client->subscribe(FolderName::fromDisplay('Отчёты'));
+        $client->rename(FolderName::fromDisplay('Отчёты'), FolderName::fromDisplay('Отчёты 2026'));
+        self::assertContains('Отчёты 2026', self::names($client));
+        self::assertNotContains('Отчёты', self::names($client));
+
+        $client->deleteEmpty(FolderName::fromDisplay('Отчёты 2026'));
+
+        self::assertNotContains('Отчёты 2026', self::names($client));
+    }
+
+    #[Test]
+    public function aFolderHoldingMailIsPutBackWithItsMail(): void
+    {
+        $client = $this->signedIn();
+        $client->create(FolderName::fromWire('Kept'));
+        $client->append(FolderName::fromWire('Kept'), "Subject: kept\r\n\r\nbody\r\n");
+
+        try {
+            $client->deleteEmpty(FolderName::fromWire('Kept'));
+            self::fail('a folder holding mail is not deleted');
+        } catch (FolderNotEmpty $notEmpty) {
+            self::assertSame(1, $notEmpty->messages);
+            self::assertNull($notEmpty->leftAt);
+        }
+
+        self::assertSame(1, $client->counts(FolderName::fromWire('Kept'))->messages);
+        self::assertSame(['INBOX', 'Drafts', 'Junk', 'Kept', 'Sent', 'Trash'], self::sortedNames($client), 'nothing left aside');
+    }
+
+    /** The measurement for deleting into Trash: a folder, with its mail, can be moved under Trash and back. */
+    #[Test]
+    public function aFolderWithItsMailGoesUnderTrashAndComesBack(): void
+    {
+        $client = $this->signedIn();
+        $client->create(FolderName::fromWire('Project'));
+        $client->append(FolderName::fromWire('Project'), "Subject: in the project\r\n\r\nbody\r\n");
+
+        $trash = array_values(array_filter($client->folders(), static fn ($folder) => SpecialUse::Trash === $folder->role))[0];
+        $under = FolderName::fromWire($trash->name->wire . $trash->delimiter . 'Project');
+
+        $client->rename(FolderName::fromWire('Project'), $under);
+        self::assertSame(1, $client->counts($under)->messages);
+        $client->rename($under, FolderName::fromWire('Project'));
+
+        self::assertSame(1, $client->counts(FolderName::fromWire('Project'))->messages);
+    }
+
     protected function setUp(): void
     {
         $this->user = 'conformance-' . bin2hex(random_bytes(4));
+    }
+
+    /** @return list<string> */
+    private static function names(Client $client): array
+    {
+        return array_map(static fn ($folder) => $folder->name->display, $client->folders());
+    }
+
+    /** @return list<string> */
+    private static function sortedNames(Client $client): array
+    {
+        $names = self::names($client);
+        sort($names);
+
+        return $names;
     }
 
     private static function ca(): string
