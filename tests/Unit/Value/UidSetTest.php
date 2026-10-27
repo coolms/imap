@@ -23,6 +23,14 @@ final class UidSetTest extends TestCase
     }
 
     #[Test]
+    public function aSetIsBoundedUnlessItRunsOnToTheLastMessage(): void
+    {
+        self::assertTrue(UidSet::of([3, 5])->isBounded());
+        self::assertTrue(UidSet::parse('3:5,9')->isBounded());
+        self::assertFalse(UidSet::fromOnward(1)->isBounded(), '"1:*" is every message, whatever arrives');
+    }
+
+    #[Test]
     public function uidsAreWrittenInTheShortestForm(): void
     {
         self::assertSame('1:5,7,9:12', UidSet::of([12, 1, 2, 3, 4, 5, 7, 9, 10, 11, 3])->toString());

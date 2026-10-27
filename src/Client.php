@@ -57,7 +57,8 @@ use function strtoupper;
  * The capabilities are read again after authentication -- a server may offer more once it knows who is asking -- from
  * the completion's [CAPABILITY ...] code when it gives one, by asking when it does not.
  *
- * It never deletes mail: no EXPUNGE is sent and \Deleted is never stored. A message leaves a folder only by MOVE.
+ * It purges no folder: no CLOSE and no EXPUNGE of a whole folder. Mail is removed only by uidExpunge(), which names the
+ * messages; otherwise a message leaves a folder only by MOVE.
  */
 final class Client
 {
@@ -220,10 +221,10 @@ final class Client
     }
 
     /**
-     * DELETE a folder only when it holds nothing: a server deletes a folder's mail with it (RFC 9051 s.6.3.5), and this
-     * library deletes no mail. The folder is first renamed to a name only this client knows, so no other client can put
-     * mail in it while it is looked at; it is deleted when it holds no message and no folder there, and otherwise put
-     * back under its own name and reported as FolderNotEmpty.
+     * DELETE a folder only when it holds nothing: a server deletes a folder's mail with it (RFC 9051 s.6.3.5). The
+     * folder is first renamed to a name only this client knows, so no other client can put mail in it while it is
+     * looked at; it is deleted when it holds no message and no folder there, and otherwise put back under its own name
+     * and reported as FolderNotEmpty.
      */
     public function deleteEmpty(FolderName $folder): void
     {
@@ -261,6 +262,18 @@ final class Client
     }
 
     /**
+     * DELETE a folder as it stands (RFC 9051 s.6.3.5). What becomes of mail still in it is the server's to decide: one
+     * keeps it elsewhere, another destroys it. This sends the command and nothing else; a caller that must not lose
+     * mail makes sure the folder holds only what it may lose, or uses deleteEmpty(). Never the INBOX.
+     */
+    public function delete(FolderName $folder): void
+    {
+        $this->authenticatedOnly();
+        self::notTheInbox($folder, 'deleted');
+        $this->ok(new Command('DELETE', Argument::folder($folder)));
+    }
+
+    /**
      * APPEND a message to a folder (RFC 9051 s.6.3.12); with UIDPLUS (RFC 4315) the UID it got, from [APPENDUID
      * uidvalidity uid] -- null when the server did not say.
      *
@@ -271,7 +284,7 @@ final class Client
         $this->authenticatedOnly();
         foreach ($flags as $flag) {
             if (0 === strcasecmp($flag, '\Deleted')) {
-                throw new LogicException('\Deleted is never stored: this library does not delete mail.');
+                throw new LogicException('\Deleted is never appended: mail is removed only by uidExpunge().');
             }
         }
         $reply = $this->ok(new Command(
@@ -360,7 +373,8 @@ final class Client
      * UID STORE of flags -- "+" adds, "-" removes, "" replaces -- silent, and with UNCHANGEDSINCE only where no other
      * client changed the message after that mod-sequence (RFC 7162 s.3.1.3).
      *
-     * \Deleted is refused: this library never marks a message for EXPUNGE, and never expunges.
+     * \Deleted is refused here: a message is marked for removal only by uidExpunge(), which removes it in the same
+     * call.
      *
      * @param list<string> $flags
      */
@@ -369,7 +383,7 @@ final class Client
         $this->selectedOnly();
         foreach ($flags as $flag) {
             if (0 === strcasecmp($flag, '\Deleted')) {
-                throw new LogicException('\Deleted is never stored: this library does not delete mail.');
+                throw new LogicException('\Deleted is stored only by uidExpunge(), for the messages it removes.');
             }
         }
         $this->modseqs($unchangedSince);
@@ -437,13 +451,13 @@ final class Client
     /**
      * UID MOVE (RFC 6851): the messages leave this folder for that one, and COPYUID -- where the server gives it --
      * says the UIDs they have there. Without MOVE it is refused: the fallback, COPY then \Deleted then EXPUNGE,
-     * deletes mail, which this library does not do.
+     * purges the whole folder, which this library does not do.
      */
     public function uidMove(UidSet $uids, FolderName $to): ?CopyUid
     {
         $this->selectedOnly();
         if (!$this->capabilities->has(Capability::Move)) {
-            throw new LogicException('The server has no MOVE, and this library does not delete mail to move it.');
+            throw new LogicException('The server has no MOVE, and this library does not purge a folder to move mail.');
         }
         $reply = $this->ok(new Command('UID MOVE', Argument::uids($uids), Argument::folder($to)));
         foreach ([...$reply->untagged, $reply->completion] as $response) {
@@ -454,6 +468,33 @@ final class Client
         }
 
         return null;
+    }
+
+    /**
+     * Removes the named messages for good: marks them \Deleted and sends UID EXPUNGE of the same UIDs (RFC 4315 s.2.1),
+     * which removes those and no other, whatever else in the folder is marked. Refused without UIDPLUS, where the only
+     * removal is EXPUNGE of every marked message in the folder; on a folder opened read-only; and for a set that runs
+     * on to the last message ("n:*"), which names every message from there, the ones arriving meanwhile too.
+     */
+    public function uidExpunge(UidSet $uids): void
+    {
+        $this->selectedOnly();
+        if (!$uids->isBounded()) {
+            throw new LogicException('A set running on to the last message is never expunged: name the UIDs.');
+        }
+        if (!$this->capabilities->has(Capability::UidPlus)) {
+            throw new LogicException('The server has no UIDPLUS, and EXPUNGE would remove every marked message there.');
+        }
+        if (true === $this->selected?->readOnly) {
+            throw new LogicException('The folder is open read-only: nothing is removed from it.');
+        }
+        $this->ok(new Command(
+            'UID STORE',
+            Argument::uids($uids),
+            Argument::atom('+FLAGS.SILENT'),
+            Argument::list(Argument::atom('\Deleted')),
+        ));
+        $this->ok(new Command('UID EXPUNGE', Argument::uids($uids)));
     }
 
     /**

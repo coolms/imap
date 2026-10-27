@@ -12,8 +12,10 @@ mail as it arrives, and never lose a change another client made in between.
 - **Sign-in:** PLAIN, LOGIN, XOAUTH2 and OAUTHBEARER, with SASL-IR.
 - **TLS verified, always.** Implicit TLS or STARTTLS, the certificate checked against the server's name. STARTTLS is
   never skipped when it was asked for, and bytes slipped in before the handshake are refused.
-- **It never deletes mail.** No EXPUNGE is ever sent and `\Deleted` is never stored; a message leaves a folder only
-  by MOVE. A folder is deleted only when it is empty, checked under a name no other client knows (`deleteEmpty()`).
+- **It purges no folder.** No CLOSE and no EXPUNGE of a whole folder are ever sent. Mail is removed only when it is
+  named: `uidExpunge()` removes those UIDs and no other (UIDPLUS), and otherwise a message leaves a folder only by
+  MOVE. `deleteEmpty()` deletes a folder only when it is empty, checked under a name no other client knows; `delete()`
+  is the plain DELETE, for a caller that has made sure itself.
 - **Folders** created, renamed (with the folders inside) and subscribed to.
 - **Bounded.** Response lines and literals have limits checked before they are read into memory; UID sets are kept as
   ranges, never expanded.
