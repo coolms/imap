@@ -10,6 +10,9 @@ use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
 use SplFileInfo;
 
+use function array_diff;
+use function array_filter;
+use function array_values;
 use function file_get_contents;
 use function is_array;
 use function preg_match;
@@ -21,9 +24,10 @@ use function substr;
 use function token_get_all;
 
 /**
- * This library deletes no mail: it sends no CLOSE, which expunges a folder selected read-write, and no EXPUNGE,
- * which removes every message flagged \Deleted in the folder, another client's too. Read from the sources, by tokens,
- * so a comment that names them is not a send.
+ * This library purges no folder: it sends no CLOSE, which expunges a folder selected read-write, and no EXPUNGE,
+ * which removes every message flagged \Deleted in the folder, another client's too. The one removal it sends is UID
+ * EXPUNGE of named messages, from one place. Read from the sources, by tokens, so a comment that names them is not a
+ * send.
  */
 final class NoFolderWidePurgeTest extends TestCase
 {
@@ -42,7 +46,11 @@ final class NoFolderWidePurgeTest extends TestCase
             }
         }
 
-        self::assertSame([], $sites, 'the library deletes no mail');
+        $named = array_values(array_filter($sites, static fn (string $site): bool => str_ends_with($site, ' UID EXPUNGE')));
+        $purges = array_values(array_diff($sites, $named));
+        self::assertSame([], $purges, 'no CLOSE and no EXPUNGE of a whole folder');
+        self::assertCount(1, $named, 'UID EXPUNGE of named messages is sent from one place');
+        self::assertStringStartsWith('Client.php:', $named[0]);
     }
 
     #[Test]
@@ -61,13 +69,13 @@ final class NoFolderWidePurgeTest extends TestCase
             $reply = Response::parse("* 1 EXPUNGE\r\n");
             PHP;
 
-        self::assertSame(['2 CLOSE', '3 EXPUNGE', '4 CLOSE', '5 EXPUNGE', '6 EXPUNGE', '7 ->expunge()'], self::sites($source));
+        self::assertSame(['2 CLOSE', '3 EXPUNGE', '4 CLOSE', '5 EXPUNGE', '6 UID EXPUNGE', '7 ->expunge()'], self::sites($source));
     }
 
     /**
      * Each line that sends CLOSE or EXPUNGE, and which: a string, quoted or a part of an interpolated one, with a line
-     * whose command is CLOSE, EXPUNGE or UID EXPUNGE (at the line's start, or after one tag; never a server's untagged
-     * `* 1 EXPUNGE`), and a call of `->expunge()`. Capitals only, as a command is written.
+     * whose command is CLOSE, EXPUNGE or UID EXPUNGE (at the line's start, or after one tag, and UID never read as a
+     * tag; never a server's untagged `* 1 EXPUNGE`), and a call of `->expunge()`. Capitals only, as a command is written.
      *
      * @return list<string>
      */
@@ -82,8 +90,8 @@ final class NoFolderWidePurgeTest extends TestCase
             if (T_CONSTANT_ENCAPSED_STRING === $token[0] || T_ENCAPSED_AND_WHITESPACE === $token[0]) {
                 $text = T_CONSTANT_ENCAPSED_STRING === $token[0] ? substr($token[1], 1, -1) : $token[1];
                 foreach (preg_split('/\\\\r\\\\n|\\\\n|\r?\n/', $text) ?: [] as $line) {
-                    if (1 === preg_match('/^\s*(?:(?!\*)\S+\s+)?(?:UID\s+)?(CLOSE|EXPUNGE)(?![A-Za-z])/', $line, $match)) {
-                        $sites[] = sprintf('%d %s', $token[2], $match[1]);
+                    if (1 === preg_match('/^\s*(?:(?!\*|UID\s)\S+\s+)?(UID\s+)?(CLOSE|EXPUNGE)(?![A-Za-z])/', $line, $match)) {
+                        $sites[] = sprintf('%d %s%s', $token[2], '' === $match[1] ? '' : 'UID ', $match[2]);
                     }
                 }
             }

@@ -245,6 +245,31 @@ final class ClientMessagesTest extends TestCase
     }
 
     #[Test]
+    public function aUidExpungeRemovesTheNamedMessagesAndNoOther(): void
+    {
+        // RFC 4315 s.2.1: UID EXPUNGE removes only the messages named that are \Deleted, whatever else is.
+        $client = $this->selected('UIDPLUS', "a2 OK stored\r\n* 3 EXPUNGE\r\na3 OK expunged\r\n");
+
+        $client->uidExpunge(UidSet::of([4, 7]));
+
+        self::assertSame("a2 UID STORE 4,7 +FLAGS.SILENT (\\Deleted)\r\na3 UID EXPUNGE 4,7\r\n", $this->written());
+    }
+
+    #[Test]
+    public function withoutUidplusNothingIsExpunged(): void
+    {
+        // Without UIDPLUS the only expunge is EXPUNGE, which removes every \Deleted message in the folder.
+        $client = $this->selected('', '');
+
+        try {
+            $client->uidExpunge(UidSet::of([4]));
+            self::fail('a server without UIDPLUS is refused');
+        } catch (LogicException) {
+        }
+        self::assertSame('', $this->written(), 'not even the \\Deleted flag is stored');
+    }
+
+    #[Test]
     public function nothingOnMessagesBeforeAFolderIsSelected(): void
     {
         $pair = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);

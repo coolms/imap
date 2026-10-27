@@ -208,15 +208,27 @@ final class ClientFoldersTest extends TestCase
     }
 
     #[Test]
+    public function aFolderIsDeletedAsAskedAndTheServerDecidesWhatBecomesOfItsMail(): void
+    {
+        $client = $this->signedIn("a2 OK deleted\r\n");
+
+        $client->delete(FolderName::fromWire('Runs/folder-measure-1'));
+
+        self::assertSame("a2 DELETE \"Runs/folder-measure-1\"\r\n", $this->afterSignIn(), 'one DELETE, no look first');
+    }
+
+    #[Test]
     public function theInboxIsNeverRenamedOrDeleted(): void
     {
         $client = $this->signedIn('');
 
-        foreach (['rename', 'deleteEmpty'] as $operation) {
+        foreach (['rename', 'deleteEmpty', 'delete'] as $operation) {
             try {
-                'rename' === $operation
-                    ? $client->rename(FolderName::fromWire('inbox'), FolderName::fromWire('Old'))
-                    : $client->deleteEmpty(FolderName::fromWire('INBOX'));
+                match ($operation) {
+                    'rename' => $client->rename(FolderName::fromWire('inbox'), FolderName::fromWire('Old')),
+                    'deleteEmpty' => $client->deleteEmpty(FolderName::fromWire('INBOX')),
+                    default => $client->delete(FolderName::fromWire('Inbox')),
+                };
                 self::fail($operation . ' of the INBOX is refused');
             } catch (LogicException) {
             }
