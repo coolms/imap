@@ -38,24 +38,53 @@ final class NoFolderWidePurgeTest extends TestCase
             if (!$file->isFile() || !str_ends_with($file->getFilename(), '.php')) {
                 continue;
             }
-            $tokens = token_get_all((string) file_get_contents($file->getPathname()));
-            foreach ($tokens as $i => $token) {
-                if (!is_array($token)) {
-                    continue;
-                }
-                if (T_CONSTANT_ENCAPSED_STRING === $token[0]) {
-                    $text = strtoupper(trim(substr($token[1], 1, -1)));
-                    if (in_array($text, ['CLOSE', 'EXPUNGE', 'UID EXPUNGE'], true)) {
-                        $sites[] = sprintf('%s:%d %s', $file->getFilename(), $token[2], $text);
-                    }
-                }
-                $next = $tokens[$i + 1] ?? null;
-                if (T_OBJECT_OPERATOR === $token[0] && is_array($next) && 'expunge' === strtolower($next[1])) {
-                    $sites[] = sprintf('%s:%d ->expunge()', $file->getFilename(), $token[2]);
-                }
+            foreach (self::sites((string) file_get_contents($file->getPathname())) as $site) {
+                $sites[] = $file->getFilename() . ':' . $site;
             }
         }
 
         self::assertSame([], $sites, 'the library deletes no mail');
+    }
+
+    #[Test]
+    public function aCommandIsFoundHoweverItIsWritten(): void
+    {
+        $source = <<<'PHP'
+            <?php
+            $this->run(new Command('CLOSE'));
+            $this->run(new Command('UID', atom('EXPUNGE')));
+            $this->send($tag . " CLOSE\r\n");
+            $this->send("$tag EXPUNGE\r\n");
+            $this->send("$tag UID EXPUNGE 4\r\n");
+            $connection->expunge();
+            $this->send($tag . " IDLE\r\n");
+            $this->send("DONE\r\n");
+            PHP;
+
+        self::assertSame(['2 CLOSE', '3 EXPUNGE', '4 CLOSE', '5 EXPUNGE', '6 EXPUNGE', '7 ->expunge()'], self::sites($source));
+    }
+
+    /** @return list<string> each line that sends CLOSE or EXPUNGE, and which */
+    private static function sites(string $source): array
+    {
+        $sites = [];
+        $tokens = token_get_all($source);
+        foreach ($tokens as $i => $token) {
+            if (!is_array($token)) {
+                continue;
+            }
+            if (T_CONSTANT_ENCAPSED_STRING === $token[0]) {
+                $text = strtoupper(trim(substr($token[1], 1, -1)));
+                if (in_array($text, ['CLOSE', 'EXPUNGE', 'UID EXPUNGE'], true)) {
+                    $sites[] = sprintf('%d %s', $token[2], 'CLOSE' === $text ? 'CLOSE' : 'EXPUNGE');
+                }
+            }
+            $next = $tokens[$i + 1] ?? null;
+            if (T_OBJECT_OPERATOR === $token[0] && is_array($next) && 'expunge' === strtolower($next[1])) {
+                $sites[] = sprintf('%d ->expunge()', $token[2]);
+            }
+        }
+
+        return $sites;
     }
 }
