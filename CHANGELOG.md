@@ -11,8 +11,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - `Client::uidExpunge(UidSet)`: removes the named messages for good, by UID STORE of `\Deleted` and UID EXPUNGE of
   the same UIDs (RFC 4315 s.2.1), which removes those and no other, whatever else in the folder is marked. Refused
-  without UIDPLUS, where the only removal is EXPUNGE of every marked message in the folder, and on a folder opened
-  read-only. `\Deleted` is still refused by `uidStore()` and `append()`.
+  without UIDPLUS, where the only removal is EXPUNGE of every marked message in the folder; on a folder opened
+  read-only; and for a set that runs on to the last message (`n:*`), which names every message from there, arriving
+  ones too. `\Deleted` is still refused by `uidStore()` and `append()`.
+- `UidSet::isBounded()`: false for a set that runs on to the last message (`n:*`).
 - `Client::delete(FolderName)`: a plain DELETE (RFC 9051 s.6.3.5). What becomes of mail still in the folder is the
   server's to decide, and servers differ: one keeps it elsewhere, another destroys it. A caller that must not lose mail
   makes sure the folder holds only what it may lose, or uses `deleteEmpty()`. Never the INBOX.

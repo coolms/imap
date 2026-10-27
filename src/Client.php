@@ -473,11 +473,15 @@ final class Client
     /**
      * Removes the named messages for good: marks them \Deleted and sends UID EXPUNGE of the same UIDs (RFC 4315 s.2.1),
      * which removes those and no other, whatever else in the folder is marked. Refused without UIDPLUS, where the only
-     * removal is EXPUNGE of every marked message in the folder, and on a folder opened read-only.
+     * removal is EXPUNGE of every marked message in the folder; on a folder opened read-only; and for a set that runs
+     * on to the last message ("n:*"), which names every message from there, the ones arriving meanwhile too.
      */
     public function uidExpunge(UidSet $uids): void
     {
         $this->selectedOnly();
+        if (!$uids->isBounded()) {
+            throw new LogicException('A set running on to the last message is never expunged: name the UIDs.');
+        }
         if (!$this->capabilities->has(Capability::UidPlus)) {
             throw new LogicException('The server has no UIDPLUS, and EXPUNGE would remove every marked message there.');
         }

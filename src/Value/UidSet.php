@@ -129,6 +129,18 @@ final readonly class UidSet
         return $uids;
     }
 
+    /** Whether every range ends at a UID: false for "n:*", which runs on to the last message, arriving ones too. */
+    public function isBounded(): bool
+    {
+        foreach ($this->ranges as [, $last]) {
+            if (null === $last) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     public function toString(): string
     {
         $parts = [];
