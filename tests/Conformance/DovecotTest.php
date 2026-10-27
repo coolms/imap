@@ -7,6 +7,7 @@ namespace CoolMS\Imap\Tests\Conformance;
 use CoolMS\Imap\Client;
 use CoolMS\Imap\Exception\CouldNotOpen;
 use CoolMS\Imap\Exception\FolderNotEmpty;
+use CoolMS\Imap\Protocol\Argument;
 use CoolMS\Imap\Protocol\Response;
 use CoolMS\Imap\Transport\Endpoint;
 use CoolMS\Imap\Transport\Security;
@@ -267,6 +268,31 @@ final class DovecotTest extends TestCase
 
         self::assertSame(1, $client->counts(FolderName::fromWire('Kept'))->messages);
         self::assertSame(['Drafts', 'INBOX', 'Junk', 'Kept', 'Sent', 'Trash'], self::sortedNames($client), 'nothing left aside');
+    }
+
+    #[Test]
+    public function aUidExpungeRemovesTheNamedMessageAndNoOther(): void
+    {
+        $client = $this->signedIn();
+        $gone = (int) $client->append(FolderName::fromWire('INBOX'), "Subject: run's own\r\n\r\nx");
+        $kept = (int) $client->append(FolderName::fromWire('INBOX'), "Subject: someone else's\r\n\r\nx");
+        $client->select(FolderName::fromWire('INBOX'));
+
+        $client->uidExpunge(UidSet::of([$gone]));
+
+        self::assertSame([$kept], $client->uidSearch(Argument::atom('ALL')));
+    }
+
+    #[Test]
+    public function aPlainDeleteRemovesAFolderWithWhatItHolds(): void
+    {
+        $client = $this->signedIn();
+        $client->create(FolderName::fromWire('Run'));
+        $client->append(FolderName::fromWire('Run'), "Subject: the run's own\r\n\r\nx");
+
+        $client->delete(FolderName::fromWire('Run'));
+
+        self::assertNotContains('Run', self::names($client));
     }
 
     /** The measurement for deleting into Trash: a folder, with its mail, can be moved under Trash and back. */
