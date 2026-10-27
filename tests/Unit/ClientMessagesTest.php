@@ -256,6 +256,30 @@ final class ClientMessagesTest extends TestCase
     }
 
     #[Test]
+    public function aSetRunningOnToTheLastMessageIsNeverExpunged(): void
+    {
+        // "1:*" names every message in the folder, the ones arriving meanwhile too: a purge by another name.
+        $client = $this->selected('UIDPLUS', '');
+
+        try {
+            $client->uidExpunge(UidSet::fromOnward(1));
+            self::fail('an open-ended set is refused');
+        } catch (LogicException) {
+        }
+        self::assertSame('', $this->written(), 'nothing is sent, not even the flag');
+    }
+
+    #[Test]
+    public function aRangeIsExpungedAsWritten(): void
+    {
+        $client = $this->selected('UIDPLUS', "a2 OK\r\na3 OK\r\n");
+
+        $client->uidExpunge(UidSet::parse('3:5'));
+
+        self::assertSame("a2 UID STORE 3:5 +FLAGS.SILENT (\\Deleted)\r\na3 UID EXPUNGE 3:5\r\n", $this->written());
+    }
+
+    #[Test]
     public function withoutUidplusNothingIsExpunged(): void
     {
         // Without UIDPLUS the only expunge is EXPUNGE, which removes every \Deleted message in the folder.
