@@ -11,15 +11,14 @@ use RecursiveIteratorIterator;
 use SplFileInfo;
 
 use function file_get_contents;
-use function in_array;
 use function is_array;
+use function preg_match;
+use function preg_split;
 use function sprintf;
 use function str_ends_with;
 use function strtolower;
-use function strtoupper;
 use function substr;
 use function token_get_all;
-use function trim;
 
 /**
  * This library deletes no mail: it sends no CLOSE, which expunges a folder selected read-write, and no EXPUNGE,
@@ -59,12 +58,19 @@ final class NoFolderWidePurgeTest extends TestCase
             $connection->expunge();
             $this->send($tag . " IDLE\r\n");
             $this->send("DONE\r\n");
+            $reply = Response::parse("* 1 EXPUNGE\r\n");
             PHP;
 
         self::assertSame(['2 CLOSE', '3 EXPUNGE', '4 CLOSE', '5 EXPUNGE', '6 EXPUNGE', '7 ->expunge()'], self::sites($source));
     }
 
-    /** @return list<string> each line that sends CLOSE or EXPUNGE, and which */
+    /**
+     * Each line that sends CLOSE or EXPUNGE, and which: a string, quoted or a part of an interpolated one, with a line
+     * whose command is CLOSE, EXPUNGE or UID EXPUNGE (at the line's start, or after one tag; never a server's untagged
+     * `* 1 EXPUNGE`), and a call of `->expunge()`. Capitals only, as a command is written.
+     *
+     * @return list<string>
+     */
     private static function sites(string $source): array
     {
         $sites = [];
@@ -73,10 +79,12 @@ final class NoFolderWidePurgeTest extends TestCase
             if (!is_array($token)) {
                 continue;
             }
-            if (T_CONSTANT_ENCAPSED_STRING === $token[0]) {
-                $text = strtoupper(trim(substr($token[1], 1, -1)));
-                if (in_array($text, ['CLOSE', 'EXPUNGE', 'UID EXPUNGE'], true)) {
-                    $sites[] = sprintf('%d %s', $token[2], 'CLOSE' === $text ? 'CLOSE' : 'EXPUNGE');
+            if (T_CONSTANT_ENCAPSED_STRING === $token[0] || T_ENCAPSED_AND_WHITESPACE === $token[0]) {
+                $text = T_CONSTANT_ENCAPSED_STRING === $token[0] ? substr($token[1], 1, -1) : $token[1];
+                foreach (preg_split('/\\\\r\\\\n|\\\\n|\r?\n/', $text) ?: [] as $line) {
+                    if (1 === preg_match('/^\s*(?:(?!\*)\S+\s+)?(?:UID\s+)?(CLOSE|EXPUNGE)(?![A-Za-z])/', $line, $match)) {
+                        $sites[] = sprintf('%d %s', $token[2], $match[1]);
+                    }
                 }
             }
             $next = $tokens[$i + 1] ?? null;
