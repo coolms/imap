@@ -46,7 +46,10 @@ final class NoFolderWidePurgeTest extends TestCase
             }
         }
 
-        $named = array_values(array_filter($sites, static fn (string $site): bool => str_ends_with($site, ' UID EXPUNGE')));
+        $named = array_values(array_filter(
+            $sites,
+            static fn (string $site): bool => str_ends_with($site, ' UID EXPUNGE'),
+        ));
         $purges = array_values(array_diff($sites, $named));
         self::assertSame([], $purges, 'no CLOSE and no EXPUNGE of a whole folder');
         self::assertCount(1, $named, 'UID EXPUNGE of named messages is sent from one place');
@@ -69,13 +72,15 @@ final class NoFolderWidePurgeTest extends TestCase
             $reply = Response::parse("* 1 EXPUNGE\r\n");
             PHP;
 
-        self::assertSame(['2 CLOSE', '3 EXPUNGE', '4 CLOSE', '5 EXPUNGE', '6 UID EXPUNGE', '7 ->expunge()'], self::sites($source));
+        $expected = ['2 CLOSE', '3 EXPUNGE', '4 CLOSE', '5 EXPUNGE', '6 UID EXPUNGE', '7 ->expunge()'];
+        self::assertSame($expected, self::sites($source));
     }
 
     /**
      * Each line that sends CLOSE or EXPUNGE, and which: a string, quoted or a part of an interpolated one, with a line
      * whose command is CLOSE, EXPUNGE or UID EXPUNGE (at the line's start, or after one tag, and UID never read as a
-     * tag; never a server's untagged `* 1 EXPUNGE`), and a call of `->expunge()`. Capitals only, as a command is written.
+     * tag; never a server's untagged `* 1 EXPUNGE`), and a call of `->expunge()`. Capitals only, as a command is
+     * written.
      *
      * @return list<string>
      */
@@ -90,7 +95,8 @@ final class NoFolderWidePurgeTest extends TestCase
             if (T_CONSTANT_ENCAPSED_STRING === $token[0] || T_ENCAPSED_AND_WHITESPACE === $token[0]) {
                 $text = T_CONSTANT_ENCAPSED_STRING === $token[0] ? substr($token[1], 1, -1) : $token[1];
                 foreach (preg_split('/\\\\r\\\\n|\\\\n|\r?\n/', $text) ?: [] as $line) {
-                    if (1 === preg_match('/^\s*(?:(?!\*|UID\s)\S+\s+)?(UID\s+)?(CLOSE|EXPUNGE)(?![A-Za-z])/', $line, $match)) {
+                    $command = '/^\s*(?:(?!\*|UID\s)\S+\s+)?(UID\s+)?(CLOSE|EXPUNGE)(?![A-Za-z])/';
+                    if (1 === preg_match($command, $line, $match)) {
                         $sites[] = sprintf('%d %s%s', $token[2], '' === $match[1] ? '' : 'UID ', $match[2]);
                     }
                 }

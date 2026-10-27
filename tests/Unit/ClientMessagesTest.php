@@ -198,7 +198,7 @@ final class ClientMessagesTest extends TestCase
     }
 
     #[Test]
-    public function deletedIsNeverStored(): void
+    public function deletedIsStoredOnlyByUidExpunge(): void
     {
         $client = $this->selected('', '');
 
@@ -206,7 +206,7 @@ final class ClientMessagesTest extends TestCase
             $client->uidStore(UidSet::of([4]), '+', ['\Seen', '\deleted']);
             self::fail('\Deleted stored');
         } catch (LogicException $refused) {
-            self::assertStringContainsString('does not delete mail', $refused->getMessage());
+            self::assertStringContainsString('only by uidExpunge()', $refused->getMessage());
             self::assertSame('', $this->written());
         }
     }
