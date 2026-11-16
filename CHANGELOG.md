@@ -5,6 +5,21 @@ All notable changes to `coolms/imap` are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/). Before 1.0.0, a minor version may break the API.
 
+## Unreleased
+
+### Added
+
+- `FetchItem::envelope()` and `FetchItem::bodyStructure()`, read into `FetchedItems::$envelope` (an `Envelope`) and
+  `FetchedItems::$bodyStructure` (a `BodyPart` tree). Both are null when not asked for; existing callers are unchanged.
+- `Envelope`: date, subject, from, sender, reply-to, to, cc, bcc, in-reply-to and message-id as the server parsed them
+  (RFC 9051 s.7.5.2). Strings are kept as sent: decoding RFC 2047 words is the caller's. A group contributes its
+  members, never its name as an address.
+- `Address`: name, mailbox, host, and `email()`.
+- `BodyPart`: each part's type, subtype, parameters, id, description, encoding, size, lines and disposition, numbered
+  as the RFC numbers sections ("1" for a message that is not multipart; "1.2" inside a multipart; "3.1" inside a
+  forwarded message at "3"). `fetchSection()` gives the `Section` that fetches a part; `firstText()`, `attachments()`,
+  `leaves()`, `filename()` (RFC 2231 forms decoded) and `isAttachment()` read the tree without fetching a byte.
+
 ## 0.1.0-alpha.7
 
 ### Added

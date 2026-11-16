@@ -27,6 +27,8 @@ use function strtoupper;
  * Gmail's ids (X-GM-EXT-1) are unsigned 64-bit numbers, kept as their digits: one past PHP_INT_MAX is still an id.
  * Its labels are kept as sent: a system label starts with a backslash (\Inbox, \Important, \Sent), any other is a
  * folder's wire name (FolderName::fromWire() reads it).
+ *
+ * ENVELOPE and BODYSTRUCTURE are parsed into an Envelope and a BodyPart tree; null when not asked for.
  */
 final readonly class FetchedItems
 {
@@ -46,6 +48,8 @@ final readonly class FetchedItems
         public ?string $gmailMessageId = null,
         public ?string $gmailThreadId = null,
         public ?array $gmailLabels = null,
+        public ?Envelope $envelope = null,
+        public ?BodyPart $bodyStructure = null,
     ) {
     }
 
@@ -61,6 +65,7 @@ final readonly class FetchedItems
             throw new ProtocolError('FETCH', 0, 'a FETCH item without its value');
         }
         $uid = $flags = $modseq = $size = $internalDate = $gmailMessageId = $gmailThreadId = $gmailLabels = null;
+        $envelope = $bodyStructure = null;
         $sections = [];
         for ($i = 0; $i < count($items); $i += 2) {
             [$name, $value] = [$items[$i], $items[$i + 1]];
@@ -84,6 +89,8 @@ final readonly class FetchedItems
                 'X-GM-MSGID' => $gmailMessageId = self::gmailId($value, 'X-GM-MSGID'),
                 'X-GM-THRID' => $gmailThreadId = self::gmailId($value, 'X-GM-THRID'),
                 'X-GM-LABELS' => $gmailLabels = self::gmailLabels($value),
+                'ENVELOPE' => $envelope = Envelope::fromToken($value),
+                'BODYSTRUCTURE' => $bodyStructure = BodyPart::fromToken($value),
                 default => null,
             };
         }
@@ -99,6 +106,8 @@ final readonly class FetchedItems
             $gmailMessageId,
             $gmailThreadId,
             $gmailLabels,
+            $envelope,
+            $bodyStructure,
         );
     }
 
