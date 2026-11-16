@@ -48,6 +48,21 @@ final readonly class FetchItem
         return new self('INTERNALDATE');
     }
 
+    /** The header fields the server parsed for the message (Envelope): sender, recipients, subject, ids. */
+    public static function envelope(): self
+    {
+        return new self('ENVELOPE');
+    }
+
+    /**
+     * The message's MIME tree (BodyPart): each part's type, size, encoding, file name and section, without its
+     * bytes -- what a list needs to name attachments and to fetch one text part.
+     */
+    public static function bodyStructure(): self
+    {
+        return new self('BODYSTRUCTURE');
+    }
+
     /**
      * Gmail's id of the message (X-GM-EXT-1): the same in every folder -- every label -- it shows in, where its UID
      * differs per folder.

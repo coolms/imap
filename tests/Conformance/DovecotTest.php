@@ -28,6 +28,7 @@ use function count;
 use function getenv;
 use function ksort;
 use function random_bytes;
+use function rtrim;
 use function sort;
 use function strlen;
 
@@ -79,6 +80,56 @@ final class DovecotTest extends TestCase
         self::assertSame(strlen($message), $fetched[0]->size);
         self::assertSame(['\Seen'], $fetched[0]->flags);
         self::assertGreaterThan(0, $fetched[0]->modseq);
+    }
+
+    #[Test]
+    public function theEnvelopeAndTheBodyStructureNameEveryPartAndAPartIsFetchedByItsSection(): void
+    {
+        $client = $this->signedIn();
+        $message = "From: Ann Lee <ann@x.test>\r\nTo: bob@y.test, Cy <cy@z.test>\r\nSubject: Quarterly\r\n"
+            . "Message-ID: <q3@x.test>\r\nIn-Reply-To: <q2@x.test>\r\nDate: Mon, 16 Nov 2026 01:02:03 +0300\r\n"
+            . "MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=\"b1\"\r\n\r\n"
+            . "--b1\r\nContent-Type: multipart/alternative; boundary=\"b2\"\r\n\r\n"
+            . "--b2\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nplain text\r\n"
+            . "--b2\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>html text</p>\r\n--b2--\r\n"
+            . "--b1\r\nContent-Type: application/pdf; name=\"q3.pdf\"\r\nContent-Disposition: attachment; "
+            . "filename=\"q3.pdf\"\r\nContent-Transfer-Encoding: base64\r\n\r\nJVBERi0xLjQK\r\n--b1--\r\n";
+
+        $uid = (int) $client->append(FolderName::fromWire('INBOX'), $message);
+        $client->select(FolderName::fromWire('INBOX'), true);
+        $fetched = $client->uidFetch(
+            UidSet::of([$uid]),
+            [FetchItem::envelope(), FetchItem::bodyStructure(), FetchItem::internalDate(), FetchItem::flags()],
+        )->messages;
+
+        self::assertCount(1, $fetched);
+        $envelope = $fetched[0]->envelope;
+        self::assertNotNull($envelope);
+        self::assertSame('Quarterly', $envelope->subject);
+        self::assertSame('ann@x.test', $envelope->from[0]->email());
+        self::assertSame('Ann Lee', $envelope->from[0]->name);
+        self::assertSame(['bob@y.test', 'cy@z.test'], array_map(static fn ($a) => $a->email(), $envelope->to));
+        self::assertSame('<q3@x.test>', $envelope->messageId);
+        self::assertSame('<q2@x.test>', $envelope->inReplyTo);
+        self::assertNotContains('\\Seen', $fetched[0]->flags ?? [], 'read without a byte of the body: still unread');
+
+        $body = $fetched[0]->bodyStructure;
+        self::assertNotNull($body);
+        self::assertSame('multipart/mixed', $body->mimeType());
+        self::assertSame('1.1', $body->firstText('plain')?->section);
+        self::assertSame('1.2', $body->firstText('html')?->section);
+        $attachments = $body->attachments();
+        self::assertCount(1, $attachments);
+        self::assertSame(['2', 'q3.pdf', 'application/pdf', 'base64'], [
+            $attachments[0]->section, $attachments[0]->filename(), $attachments[0]->mimeType(), $attachments[0]->encoding,
+        ]);
+
+        $plainPart = $body->firstText('plain');
+        $section = $plainPart->fetchSection();
+        $plain = $client->uidFetch(UidSet::of([$uid]), [FetchItem::body($section)])->messages;
+        self::assertSame('plain text', rtrim((string) $plain[0]->section($section)), 'the part its section names');
+        $after = $client->uidFetch(UidSet::of([$uid]), [FetchItem::flags()])->messages;
+        self::assertNotContains('\\Seen', $after[0]->flags ?? [], 'a part read with BODY.PEEK leaves it unread');
     }
 
     #[Test]
