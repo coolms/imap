@@ -90,38 +90,74 @@ final class TheOpeningDeadlineBoundsTheTlsHandshakeTest extends TestCase
 
     /** A real implicit TLS handshake under the opening deadline completes, the certificate verified. */
     #[Test]
-    public function aRealHandshakeUnderTheDeadlineCompletes(): void
+    public function aRealImplicitHandshakeUnderTheDeadlineCompletes(): void
     {
-        $cert = $this->temp('imap-cert');
-        $portFile = $this->temp('imap-port');
-        $this->files[] = $portFile . '.read';
-        $key = openssl_pkey_new(['private_key_bits' => 2048]);
-        self::assertNotFalse($key);
-        $csr = openssl_csr_new(['commonName' => 'localhost'], $key);
-        self::assertInstanceOf(OpenSSLCertificateSigningRequest::class, $csr);
-        $signed = openssl_csr_sign($csr, null, $key, 1);
-        self::assertNotFalse($signed);
-        openssl_x509_export($signed, $pem);
-        openssl_pkey_export($key, $keyPem);
-        self::assertIsString($pem);
-        self::assertIsString($keyPem);
-        file_put_contents($cert, $pem . $keyPem);
-        file_put_contents($portFile, '');
-        $this->spawn([PHP_BINARY, dirname(__DIR__, 2) . '/Support/tls-idle-server.php', $cert, $portFile, 'silent']);
-        $port = $this->port($portFile);
+        $cert = $this->certificate();
+        $port = $this->server('tls-idle-server.php', $cert, 'silent');
 
-        $client = Client::open(new Endpoint(
-            '127.0.0.1',
-            $port,
-            Security::Tls,
-            connectTimeout: 2.0,
-            readTimeout: 2.0,
-            caFile: $cert,
-            peerName: 'localhost',
-            openTimeout: 3.0,
-        ));
+        $client = Client::open($this->endpoint($port, Security::Tls, $cert, 'localhost'));
 
         self::assertSame(3, $client->select(FolderName::fromWire('INBOX'))->exists, 'signed in over TLS and reading');
+    }
+
+    /** The control: under the same deadline, a certificate for another name is refused, as before, not timed out. */
+    #[Test]
+    public function anImplicitHandshakeAgainstTheWrongNameIsRefusedUnderTheDeadline(): void
+    {
+        $cert = $this->certificate();
+        $port = $this->server('tls-idle-server.php', $cert, 'silent');
+
+        [$failure] = $this->open($this->endpoint($port, Security::Tls, $cert, 'example.test'));
+
+        self::assertInstanceOf(CouldNotOpen::class, $failure, 'the certificate is checked against the peer name');
+    }
+
+    /** The control: under the same deadline, a self-signed certificate with no CA file to trust it is refused. */
+    #[Test]
+    public function anImplicitHandshakeWithNoCaFileForTheCertificateIsRefusedUnderTheDeadline(): void
+    {
+        $cert = $this->certificate();
+        $port = $this->server('tls-idle-server.php', $cert, 'silent');
+
+        [$failure] = $this->open($this->endpoint($port, Security::Tls, null, 'localhost'));
+
+        self::assertInstanceOf(CouldNotOpen::class, $failure, 'a certificate nothing vouches for is refused');
+    }
+
+    /** A real STARTTLS handshake under the opening deadline completes, the certificate verified. */
+    #[Test]
+    public function aRealStartTlsHandshakeUnderTheDeadlineCompletes(): void
+    {
+        $cert = $this->certificate();
+        $port = $this->server('starttls-server.php', $cert);
+
+        $opened = new Opener()->open($this->endpoint($port, Security::StartTls, $cert, 'localhost'));
+
+        self::assertTrue($opened->capabilities->has('IDLE'), 'secured, and the capabilities asked again over TLS');
+    }
+
+    /** The control: under the same deadline, STARTTLS against a certificate for another name is refused. */
+    #[Test]
+    public function aStartTlsHandshakeAgainstTheWrongNameIsRefusedUnderTheDeadline(): void
+    {
+        $cert = $this->certificate();
+        $port = $this->server('starttls-server.php', $cert);
+
+        [$failure] = $this->open($this->endpoint($port, Security::StartTls, $cert, 'example.test'));
+
+        self::assertInstanceOf(CouldNotOpen::class, $failure, 'the certificate is checked against the peer name');
+    }
+
+    /** The control: under the same deadline, STARTTLS with no CA file for the self-signed certificate is refused. */
+    #[Test]
+    public function aStartTlsHandshakeWithNoCaFileForTheCertificateIsRefusedUnderTheDeadline(): void
+    {
+        $cert = $this->certificate();
+        $port = $this->server('starttls-server.php', $cert);
+
+        [$failure] = $this->open($this->endpoint($port, Security::StartTls, null, 'localhost'));
+
+        self::assertInstanceOf(CouldNotOpen::class, $failure, 'a certificate nothing vouches for is refused');
     }
 
     protected function tearDown(): void
@@ -151,6 +187,49 @@ final class TheOpeningDeadlineBoundsTheTlsHandshakeTest extends TestCase
         }
 
         return [$failure, (hrtime(true) - $started) / 1e9];
+    }
+
+    private function endpoint(int $port, Security $security, ?string $cert, string $peerName): Endpoint
+    {
+        return new Endpoint(
+            '127.0.0.1',
+            $port,
+            $security,
+            connectTimeout: 2.0,
+            readTimeout: 2.0,
+            caFile: $cert,
+            peerName: $peerName,
+            openTimeout: 3.0,
+        );
+    }
+
+    /** A self-signed certificate for localhost, with its key, in a file of its own. */
+    private function certificate(): string
+    {
+        $cert = $this->temp('imap-cert');
+        $key = openssl_pkey_new(['private_key_bits' => 2048]);
+        self::assertNotFalse($key);
+        $csr = openssl_csr_new(['commonName' => 'localhost'], $key);
+        self::assertInstanceOf(OpenSSLCertificateSigningRequest::class, $csr);
+        $signed = openssl_csr_sign($csr, null, $key, 1);
+        self::assertNotFalse($signed);
+        openssl_x509_export($signed, $pem);
+        openssl_pkey_export($key, $keyPem);
+        self::assertIsString($pem);
+        self::assertIsString($keyPem);
+        file_put_contents($cert, $pem . $keyPem);
+
+        return $cert;
+    }
+
+    private function server(string $script, string $cert, string ...$arguments): int
+    {
+        $portFile = $this->temp('imap-port');
+        $this->files[] = $portFile . '.read';
+        file_put_contents($portFile, '');
+        $this->spawn([PHP_BINARY, dirname(__DIR__, 2) . '/Support/' . $script, $cert, $portFile, ...$arguments]);
+
+        return $this->port($portFile);
     }
 
     private function trickler(string $mode, int $holdMs): int

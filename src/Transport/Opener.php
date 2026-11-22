@@ -28,6 +28,7 @@ use function stream_set_blocking;
 use function stream_set_timeout;
 use function stream_socket_client;
 use function stream_socket_enable_crypto;
+use function usleep;
 
 use const STREAM_CLIENT_CONNECT;
 use const STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT;
@@ -46,6 +47,9 @@ use const STREAM_CRYPTO_METHOD_TLSv1_3_CLIENT;
  */
 final class Opener
 {
+    /** How long a bounded TLS handshake pauses when the socket is writable but nothing came to read, in nanoseconds. */
+    private const int WRITABLE_PAUSE = 10_000_000;
+
     private const int TLS = STREAM_CRYPTO_METHOD_TLSv1_2_CLIENT | STREAM_CRYPTO_METHOD_TLSv1_3_CLIENT;
 
     /** @var Closure(Endpoint): resource */
@@ -167,9 +171,16 @@ final class Opener
                 if ($left <= 0) {
                     throw new TimedOut('The TLS handshake did not finish in time.');
                 }
+                // OpenSSL may need to write as well as read, so the wait is for either. A socket is almost always
+                // writable, though, and a handshake waiting to read would then be tried again at once: when only
+                // writability came, a short pause, so the loop never spins while the server's bytes are on their way.
                 $read = [$stream];
+                $write = [$stream];
                 $none = null;
-                @stream_select($read, $none, $none, intdiv($left, 1_000_000_000), intdiv($left % 1_000_000_000, 1000));
+                $ready = @stream_select($read, $write, $none, intdiv($left, 1_000_000_000), intdiv($left % 1_000_000_000, 1000));
+                if (false !== $ready && [] === $read && [] !== $write) {
+                    usleep(intdiv(min($left, self::WRITABLE_PAUSE), 1000));
+                }
             }
         } finally {
             if (is_resource($stream)) {
