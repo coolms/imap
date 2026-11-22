@@ -24,6 +24,10 @@ final readonly class Endpoint
         public float $readTimeout = 60.0,
         public ?string $caFile = null,
         public ?string $peerName = null,
+        // A whole response within this, however the server spaces its bytes (null: only each wait is bounded).
+        public ?float $responseTimeout = null,
+        // Connecting, the greeting, TLS and signing in, together, within this (null: each step on its own timeouts).
+        public ?float $openTimeout = null,
     ) {
         if (
             '' === $host
@@ -32,6 +36,8 @@ final readonly class Endpoint
             || $port > 65535
             || $connectTimeout <= 0
             || $readTimeout <= 0
+            || (null !== $responseTimeout && $responseTimeout <= 0)
+            || (null !== $openTimeout && $openTimeout <= 0)
         ) {
             throw new InvalidArgumentException('An endpoint needs a host, a port from 1 to 65535 and timeouts above 0.');
         }

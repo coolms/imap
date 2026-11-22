@@ -620,6 +620,8 @@ final class Client
             && 'CAPABILITY' === strtoupper($code[0]->string())
             ? Capabilities::fromTokens(...$code)
             : $this->askedCapabilities();
+        // Signed in: the opening's deadline (Endpoint::$openTimeout), which ran through the sign-in, ends here.
+        $this->connection()->within(null);
     }
 
     private function askedCapabilities(): Capabilities
