@@ -17,14 +17,21 @@ use PHPUnit\Framework\TestCase;
 
 use function dirname;
 use function fclose;
+use function file_get_contents;
 use function fwrite;
 use function hrtime;
 use function is_resource;
 use function proc_close;
 use function proc_open;
 use function proc_terminate;
+use function str_repeat;
 use function stream_set_timeout;
 use function stream_socket_pair;
+use function strlen;
+use function substr;
+use function sys_get_temp_dir;
+use function tempnam;
+use function unlink;
 use function usleep;
 
 use const PHP_BINARY;
@@ -101,6 +108,68 @@ final class ADeadlineBoundsAWholeResponseTest extends TestCase
 
         self::assertSame(2, $signedIn->select(FolderName::fromWire('INBOX'))->exists, 'read after the 0.3 s opening');
         fclose($server);
+    }
+
+    /** A connection signed in by its greeting (PREAUTH) ends the opening deadline too: a later read is not held to it. */
+    #[Test]
+    public function aPreauthenticatedConnectionEndsTheOpeningDeadline(): void
+    {
+        $pair = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
+        self::assertNotFalse($pair);
+        [$client, $server] = $pair;
+        fwrite($server, "* PREAUTH [CAPABILITY IMAP4rev1] signed in already\r\n");
+        $signedIn = Client::open(
+            new Endpoint('imap.example.test', 993, Security::Tls, readTimeout: 2.0, openTimeout: 0.3),
+            new Opener(static fn (): mixed => $client),
+        );
+
+        usleep(500_000);
+        fwrite($server, "* 2 EXISTS\r\n* OK [UIDVALIDITY 7]\r\na1 OK [READ-WRITE] ok\r\n");
+
+        self::assertSame(2, $signedIn->select(FolderName::fromWire('INBOX'))->exists, 'read after the 0.3 s opening');
+        fclose($server);
+    }
+
+    /**
+     * A read the deadline cut leaves the stream's own wait as it was configured: a write after it -- a command, an
+     * APPEND's literal -- waits for a slow peer as long as it always did, not as long as was left of the read.
+     */
+    #[Test]
+    public function aWriteAfterACutReadWaitsAsConfigured(): void
+    {
+        $pair = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
+        self::assertNotFalse($pair);
+        [$client, $server] = $pair;
+        fwrite($server, "* 1 EXISTS\r\n");
+        $reader = new ResponseReader($client, responseSeconds: 0.2, waitSeconds: 2.0);
+        self::assertSame('* 1 EXISTS', $reader->next(), 'a read whose wait the 0.2 s deadline cut');
+
+        $record = (string) tempnam(sys_get_temp_dir(), 'slow-reader');
+        $process = proc_open(
+            [PHP_BINARY, dirname(__DIR__, 2) . '/Support/slow-reader.php', '600', $record],
+            [0 => $server, 1 => ['pipe', 'w'], 2 => ['pipe', 'w']],
+            $pipes,
+        );
+        self::assertIsResource($process);
+        fclose($server);
+        $this->servers[] = $process;
+
+        $bytes = str_repeat('x', 4 * 1024 * 1024);
+        $sent = 0;
+        while ($sent < strlen($bytes)) {
+            $written = @fwrite($client, substr($bytes, $sent));
+            if (false === $written || 0 === $written) {
+                break;
+            }
+            $sent += $written;
+        }
+        fclose($client);
+        proc_close($process);
+        $this->servers = [];
+
+        self::assertSame(strlen($bytes), $sent, 'the whole write went, the peer reading only after 0.6 s');
+        self::assertSame((string) strlen($bytes), (string) file_get_contents($record));
+        unlink($record);
     }
 
     /** The control: the same server, without a response deadline, holds the read until it stops sending. */

@@ -179,8 +179,15 @@ final class ResponseReader
             stream_set_timeout($this->stream, intdiv($wait, 1_000_000_000), intdiv($wait % 1_000_000_000, 1000));
         }
         $chunk = fread($this->stream, self::CHUNK);
+        // Read before the timeout is set again, which may clear it.
+        $timedOut = (false === $chunk || '' === $chunk) && stream_get_meta_data($this->stream)['timed_out'];
+        if ($cut && null !== $this->waitSeconds) {
+            // The cut wait is this read's alone: a write after it (a command, an APPEND's literal) waits as configured.
+            $whole = (int) $this->waitSeconds;
+            stream_set_timeout($this->stream, $whole, (int) (($this->waitSeconds - $whole) * 1_000_000));
+        }
         if (false === $chunk || '' === $chunk) {
-            if (stream_get_meta_data($this->stream)['timed_out']) {
+            if ($timedOut) {
                 throw new TimedOut($cut ? self::LATE : 'The server sent nothing within the connection\'s timeout.');
             }
 
