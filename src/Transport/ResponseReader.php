@@ -179,7 +179,7 @@ final class ResponseReader
         }
         // Only a wait the deadline cuts is set here. Otherwise the stream's timeout stays as its owner left it -- the
         // opener's read timeout, or a shorter one a caller chose -- exactly as before there were deadlines.
-        if ($cut) {
+        if ($cut && null !== $wait) {
             stream_set_timeout($this->stream, intdiv($wait, 1_000_000_000), intdiv($wait % 1_000_000_000, 1000));
         }
         $chunk = fread($this->stream, self::CHUNK);
