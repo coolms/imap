@@ -16,12 +16,15 @@ use Throwable;
 
 use function fclose;
 use function hrtime;
+use function intdiv;
 use function is_resource;
 use function min;
 use function sprintf;
 use function strcasecmp;
 use function stream_context_create;
 use function stream_get_meta_data;
+use function stream_select;
+use function stream_set_blocking;
 use function stream_set_timeout;
 use function stream_socket_client;
 use function stream_socket_enable_crypto;
@@ -105,13 +108,20 @@ final class Opener
         return Capabilities::fromTokens(...$code);
     }
 
-    /** @return resource */
+    /**
+     * The socket, over TLS when the endpoint says so. With an opening deadline, implicit TLS connects over TCP and runs
+     * its handshake under what is left of the deadline ({@see handshake()}); without one, as `tls://` always did.
+     *
+     * @return resource
+     */
     private static function connect(Endpoint $endpoint): mixed
     {
+        $started = (int) hrtime(true);
         $tls = Security::Tls === $endpoint->security;
+        $bounded = $tls && null !== $endpoint->openTimeout;
         $context = stream_context_create(['ssl' => self::tlsContext($endpoint)]);
         $stream = @stream_socket_client(
-            ($tls ? 'tls://' : 'tcp://') . $endpoint->host . ':' . $endpoint->port,
+            ($tls && !$bounded ? 'tls://' : 'tcp://') . $endpoint->host . ':' . $endpoint->port,
             $errno,
             $error,
             null === $endpoint->openTimeout ? $endpoint->connectTimeout : min($endpoint->connectTimeout, $endpoint->openTimeout),
@@ -121,8 +131,51 @@ final class Opener
         if (false === $stream) {
             throw new CouldNotOpen(sprintf('%s:%d could not be reached%s: %s', $endpoint->host, $endpoint->port, $tls ? ' over TLS' : '', '' === $error ? 'no reason given' : $error));
         }
+        if ($bounded) {
+            try {
+                self::handshake($stream, $started + (int) ($endpoint->openTimeout * 1e9), sprintf('%s:%d could not be reached over TLS: the handshake failed', $endpoint->host, $endpoint->port));
+            } catch (Throwable $failed) {
+                fclose($stream);
+
+                throw $failed;
+            }
+        }
 
         return $stream;
+    }
+
+    /**
+     * The TLS handshake, non-blocking, done by `$end` (hrtime nanoseconds) or a TimedOut. A blocking handshake waits on
+     * the stream's own timeout, which bounds each wait for the server's next bytes, not the handshake: a server sending
+     * them a few at a time kept it going as long as it liked.
+     *
+     * @param resource $stream
+     */
+    private static function handshake(mixed $stream, int $end, string $failed): void
+    {
+        stream_set_blocking($stream, false);
+        try {
+            while (true) {
+                $done = @stream_socket_enable_crypto($stream, true, self::TLS);
+                if (true === $done) {
+                    return;
+                }
+                if (false === $done) {
+                    throw new CouldNotOpen($failed . '.');
+                }
+                $left = $end - (int) hrtime(true);
+                if ($left <= 0) {
+                    throw new TimedOut('The TLS handshake did not finish in time.');
+                }
+                $read = [$stream];
+                $none = null;
+                @stream_select($read, $none, $none, intdiv($left, 1_000_000_000), intdiv($left % 1_000_000_000, 1000));
+            }
+        } finally {
+            if (is_resource($stream)) {
+                stream_set_blocking($stream, true);
+            }
+        }
     }
 
     /**
@@ -175,7 +228,9 @@ final class Opener
         if ($early > 0) {
             throw new CouldNotOpen(sprintf('The server sent %d bytes after STARTTLS\'s OK, before the handshake; they would read as secured.', $early));
         }
-        if (true !== @stream_socket_enable_crypto($stream, true, self::TLS)) {
+        if (null !== $endpoint->openTimeout) {
+            self::handshake($stream, $started + (int) ($endpoint->openTimeout * 1e9), 'The TLS handshake after STARTTLS failed');
+        } elseif (true !== @stream_socket_enable_crypto($stream, true, self::TLS)) {
             throw new CouldNotOpen('The TLS handshake after STARTTLS failed.');
         }
 

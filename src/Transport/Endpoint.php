@@ -26,7 +26,8 @@ final readonly class Endpoint
         public ?string $peerName = null,
         // A whole response within this, however the server spaces its bytes (null: only each wait is bounded).
         public ?float $responseTimeout = null,
-        // Connecting, the greeting, TLS and signing in, together, within this (null: each step on its own timeouts).
+        // Connecting, the TLS handshake, the greeting, STARTTLS's handshake and signing in, together, within this (null:
+        // each step on its own timeouts).
         public ?float $openTimeout = null,
     ) {
         if (
