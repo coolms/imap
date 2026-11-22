@@ -5,6 +5,21 @@ All notable changes to `coolms/imap` are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/). Before 1.0.0, a minor version may break the API.
 
+## 0.1.0-alpha.10
+
+### Added
+
+- `Client::within()`: every read from now on must be done within the given seconds, until it is set again; null ends
+  the bound. The way to bound an operation shorter than the read timeout, such as closing a connection whose server
+  stopped answering.
+
+### Fixed
+
+- `ResponseReader` set the stream's timeout before every read, also when no deadline was cutting the wait, so a
+  shorter timeout a caller had set on the stream was overwritten with the read timeout. It now sets the timeout only
+  for a wait a deadline cuts, and puts the configured wait back after; with no deadline the stream's timeout stays as
+  its owner left it, as in 0.1.0-alpha.8.
+
 ## 0.1.0-alpha.9
 
 ### Added

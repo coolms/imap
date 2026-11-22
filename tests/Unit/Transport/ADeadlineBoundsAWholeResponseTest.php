@@ -172,6 +172,56 @@ final class ADeadlineBoundsAWholeResponseTest extends TestCase
         unlink($record);
     }
 
+    /** With no deadline cutting a wait, a timeout its owner set on the stream is left as it is, not overwritten. */
+    #[Test]
+    public function withoutADeadlineTheStreamsOwnTimeoutIsLeftAsItsOwnerSetIt(): void
+    {
+        $pair = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
+        self::assertNotFalse($pair);
+        [$client, $server] = $pair;
+        stream_set_timeout($client, 0, 150_000);
+        $reader = new ResponseReader($client, waitSeconds: 2.0);
+
+        $started = hrtime(true);
+        try {
+            $reader->next();
+            self::fail('a silent server is never a response');
+        } catch (TimedOut) {
+            $this->addToAssertionCount(1);
+        }
+        $held = (hrtime(true) - $started) / 1e9;
+        fclose($server);
+
+        self::assertLessThan(0.5, $held, 'the owner\'s 0.15 s, not the 2 s read timeout');
+    }
+
+    /** A caller bounds an operation shorter than the read timeout with within(): a silent server is cut at it. */
+    #[Test]
+    public function withinBoundsAnOperationShorterThanTheReadTimeout(): void
+    {
+        $pair = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
+        self::assertNotFalse($pair);
+        [$client, $server] = $pair;
+        fwrite($server, "* PREAUTH [CAPABILITY IMAP4rev1] signed in already\r\n");
+        $signedIn = Client::open(
+            new Endpoint('imap.example.test', 993, Security::Tls, readTimeout: 2.0, responseTimeout: 2.0),
+            new Opener(static fn (): mixed => $client),
+        );
+
+        $signedIn->within(0.2);
+        $started = hrtime(true);
+        try {
+            $signedIn->select(FolderName::fromWire('INBOX'));
+            self::fail('a server that never answers is never a selected folder');
+        } catch (TimedOut) {
+            $this->addToAssertionCount(1);
+        }
+        $held = (hrtime(true) - $started) / 1e9;
+        fclose($server);
+
+        self::assertLessThan(0.5, $held, 'the 0.2 s bound, not the 2 s response deadline or read timeout');
+    }
+
     /** The control: the same server, without a response deadline, holds the read until it stops sending. */
     #[Test]
     public function withoutTheDeadlineTheSameServerHoldsTheReadUntilItStops(): void

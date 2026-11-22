@@ -58,7 +58,9 @@ final class ResponseReader
     /**
      * @param resource   $stream
      * @param float|null $responseSeconds how long a whole response may take; null: no bound beyond each wait's
-     * @param float|null $waitSeconds     the stream's own timeout for one wait, put back after a deadline shortened it
+     * @param float|null $waitSeconds     the stream's own timeout for one wait, put back after a deadline shortened it;
+     *                                    to bound an operation shorter than that, use within(), not the stream's
+     *                                    timeout
      */
     public function __construct(
         private readonly mixed $stream,
@@ -175,7 +177,9 @@ final class ResponseReader
             $cut = null === $wait || $left < $wait;
             $wait = $cut ? $left : $wait;
         }
-        if (null !== $wait) {
+        // Only a wait the deadline cuts is set here. Otherwise the stream's timeout stays as its owner left it -- the
+        // opener's read timeout, or a shorter one a caller chose -- exactly as before there were deadlines.
+        if ($cut && null !== $wait) {
             stream_set_timeout($this->stream, intdiv($wait, 1_000_000_000), intdiv($wait % 1_000_000_000, 1000));
         }
         $chunk = fread($this->stream, self::CHUNK);

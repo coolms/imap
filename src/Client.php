@@ -573,6 +573,16 @@ final class Client
         return $this->connection()->idleRead();
     }
 
+    /**
+     * Every read from now on must be done within `$seconds`, until it is set again; null ends the bound. The way to
+     * bound an operation -- closing a connection whose server stopped answering, say -- shorter than the read timeout:
+     * a timeout set on the stream itself is the reader's to set while a deadline cuts a wait.
+     */
+    public function within(?float $seconds): void
+    {
+        $this->connection()->within($seconds);
+    }
+
     /** Whether a response is already read off the socket, in PHP's buffer or the reader's (see Connection::buffered()). */
     public function buffered(): bool
     {
