@@ -151,7 +151,8 @@ final class Connection
         while (($left = $deadline - hrtime(true)) > 0) {
             $read = [$this->stream];
             $none = [];
-            $ready = @stream_select(
+            // A response already read with the last one is here, where the select cannot see it.
+            $ready = $this->buffered() ? 1 : @stream_select(
                 $read,
                 $none,
                 $none,
@@ -312,7 +313,14 @@ final class Connection
      */
     public function buffered(): bool
     {
-        return is_resource($this->stream) && stream_get_meta_data($this->stream)['unread_bytes'] > 0;
+        return $this->reader->buffered()
+            || (is_resource($this->stream) && stream_get_meta_data($this->stream)['unread_bytes'] > 0);
+    }
+
+    /** Every read from now on must be done within `$seconds`, until it is set again; null ends the bound. */
+    public function within(?float $seconds): void
+    {
+        $this->reader->within($seconds);
     }
 
     /** @return resource the stream, for a poller to wait on */

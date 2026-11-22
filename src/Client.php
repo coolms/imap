@@ -73,6 +73,10 @@ final class Client
     {
         $this->capabilities = $opened->capabilities;
         $this->authenticated = $opened->preauthenticated();
+        if ($this->authenticated) {
+            // Signed in by the greeting (PREAUTH): the opening's deadline ends here, as signedIn() ends it otherwise.
+            $opened->connection->within(null);
+        }
     }
 
     public static function open(Endpoint $endpoint, ?Opener $opener = null): self
@@ -569,7 +573,7 @@ final class Client
         return $this->connection()->idleRead();
     }
 
-    /** Whether a response is already read off the socket and waiting in PHP's buffer (see Connection::buffered()). */
+    /** Whether a response is already read off the socket, in PHP's buffer or the reader's (see Connection::buffered()). */
     public function buffered(): bool
     {
         return $this->connection()->buffered();
@@ -620,6 +624,8 @@ final class Client
             && 'CAPABILITY' === strtoupper($code[0]->string())
             ? Capabilities::fromTokens(...$code)
             : $this->askedCapabilities();
+        // Signed in: the opening's deadline (Endpoint::$openTimeout), which ran through the sign-in, ends here.
+        $this->connection()->within(null);
     }
 
     private function askedCapabilities(): Capabilities

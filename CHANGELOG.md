@@ -5,6 +5,28 @@ All notable changes to `coolms/imap` are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/). Before 1.0.0, a minor version may break the API.
 
+## 0.1.0-alpha.9
+
+### Added
+
+- `Endpoint::$responseTimeout`: a whole response must arrive within it, however the server spaces its bytes. A
+  stream's timeout bounds each wait for the next bytes, not a read, so a server sending a byte at a time kept one read
+  going as long as it liked; past this deadline the read is a `TimedOut`. Null (the default) keeps each wait bounded
+  only, as before: a large literal may take longer than a short response should.
+- `Endpoint::$openTimeout`: connecting, the greeting, STARTTLS and the sign-in, together, within it. Its clock starts
+  before the connect, and `Client::login()` and `Client::authenticate()` end it once signed in.
+- `ResponseReader` takes `responseSeconds` and `waitSeconds`; `within()` bounds an operation's reads, `buffered()`
+  and `pending()` say what it has read ahead. `Connection::within()` passes an operation's bound on.
+
+### Changed
+
+- `ResponseReader` reads in chunks into a buffer of its own, and before each chunk cuts the wait to what is left of
+  the deadlines; both deadlines are on the monotonic clock (`hrtime`), never the wall clock.
+- `Connection::buffered()` counts the reader's buffer as well as PHP's, so a `Watch` never sleeps on a response
+  already read with the one before; `Connection::idle()` reads such a response without waiting.
+- The STARTTLS check for bytes sent after STARTTLS's OK and before the handshake counts what the reader has read ahead
+  as well as PHP's buffer, since the reader now reads ahead.
+
 ## 0.1.0-alpha.8
 
 ### Added

@@ -6,6 +6,7 @@ namespace CoolMS\Imap\Transport;
 
 use Closure;
 use CoolMS\Imap\Exception\CouldNotOpen;
+use CoolMS\Imap\Exception\TimedOut;
 use CoolMS\Imap\Protocol\Command;
 use CoolMS\Imap\Protocol\Response;
 use CoolMS\Imap\Protocol\TokenKind;
@@ -14,7 +15,9 @@ use CoolMS\Imap\Value\Capability;
 use Throwable;
 
 use function fclose;
+use function hrtime;
 use function is_resource;
+use function min;
 use function sprintf;
 use function strcasecmp;
 use function stream_context_create;
@@ -79,9 +82,10 @@ final class Opener
 
     public function open(Endpoint $endpoint): Opened
     {
+        $started = hrtime(true);
         $stream = ($this->connect)($endpoint);
         try {
-            return $this->greet($endpoint, $stream);
+            return $this->greet($endpoint, $stream, $started);
         } catch (Throwable $failed) {
             if (is_resource($stream)) {
                 fclose($stream);
@@ -110,7 +114,7 @@ final class Opener
             ($tls ? 'tls://' : 'tcp://') . $endpoint->host . ':' . $endpoint->port,
             $errno,
             $error,
-            $endpoint->connectTimeout,
+            null === $endpoint->openTimeout ? $endpoint->connectTimeout : min($endpoint->connectTimeout, $endpoint->openTimeout),
             STREAM_CLIENT_CONNECT,
             $context,
         );
@@ -121,15 +125,33 @@ final class Opener
         return $stream;
     }
 
-    /** @param resource $stream */
-    private function greet(Endpoint $endpoint, mixed $stream): Opened
+    /**
+     * The greeting, the capabilities and STARTTLS. With an opening deadline, its clock started before the connect: what
+     * is left of it bounds every read from here to the end of the sign-in ({@see Client::login()} and
+     * {@see Client::authenticate()} lift it once signed in).
+     *
+     * @param resource $stream
+     */
+    private function greet(Endpoint $endpoint, mixed $stream, int $started): Opened
     {
         stream_set_timeout(
             $stream,
             (int) $endpoint->readTimeout,
             (int) (($endpoint->readTimeout - (int) $endpoint->readTimeout) * 1_000_000),
         );
-        $connection = new Connection($stream, new ResponseReader($stream), $this->log);
+        $reader = new ResponseReader(
+            $stream,
+            responseSeconds: $endpoint->responseTimeout,
+            waitSeconds: $endpoint->readTimeout,
+        );
+        $connection = new Connection($stream, $reader, $this->log);
+        if (null !== $endpoint->openTimeout) {
+            $left = $endpoint->openTimeout - (hrtime(true) - $started) / 1e9;
+            if ($left <= 0) {
+                throw new TimedOut('The server did not open the connection in time.');
+            }
+            $connection->within($left);
+        }
         $greeting = $connection->greeting();
         if ('BYE' === $greeting->status) {
             throw new CouldNotOpen('The server refused the connection: ' . $greeting->text);
@@ -148,7 +170,8 @@ final class Opener
         if (!$reply->ok()) {
             throw new CouldNotOpen('The server refused STARTTLS: ' . $reply->completion->text);
         }
-        $early = stream_get_meta_data($stream)['unread_bytes'];
+        // Counted in PHP's buffer and in the reader's own, which reads ahead of the response it hands out.
+        $early = stream_get_meta_data($stream)['unread_bytes'] + $reader->pending();
         if ($early > 0) {
             throw new CouldNotOpen(sprintf('The server sent %d bytes after STARTTLS\'s OK, before the handshake; they would read as secured.', $early));
         }
