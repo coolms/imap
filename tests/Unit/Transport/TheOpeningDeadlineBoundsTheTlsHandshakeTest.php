@@ -16,6 +16,7 @@ use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use Throwable;
 
+use function array_values;
 use function dirname;
 use function file_get_contents;
 use function file_put_contents;
@@ -227,7 +228,7 @@ final class TheOpeningDeadlineBoundsTheTlsHandshakeTest extends TestCase
         $portFile = $this->temp('imap-port');
         $this->files[] = $portFile . '.read';
         file_put_contents($portFile, '');
-        $this->spawn([PHP_BINARY, dirname(__DIR__, 2) . '/Support/' . $script, $cert, $portFile, ...$arguments]);
+        $this->spawn(array_values([PHP_BINARY, dirname(__DIR__, 2) . '/Support/' . $script, $cert, $portFile, ...$arguments]));
 
         return $this->port($portFile);
     }

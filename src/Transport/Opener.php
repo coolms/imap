@@ -174,7 +174,9 @@ final class Opener
                 // OpenSSL may need to write as well as read, so the wait is for either. A socket is almost always
                 // writable, though, and a handshake waiting to read would then be tried again at once: when only
                 // writability came, a short pause, so the loop never spins while the server's bytes are on their way.
+                /** @var list<resource> $read stream_select() leaves only the ready ones */
                 $read = [$stream];
+                /** @var list<resource> $write */
                 $write = [$stream];
                 $none = null;
                 $ready = @stream_select($read, $write, $none, intdiv($left, 1_000_000_000), intdiv($left % 1_000_000_000, 1000));
