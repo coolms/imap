@@ -5,6 +5,22 @@ All notable changes to `coolms/imap` are recorded here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/). Before 1.0.0, a minor version may break the API.
 
+## 0.1.0-alpha.11
+
+### Fixed
+
+- `Endpoint::$openTimeout` now bounds the TLS handshake too, as its documentation said. A blocking handshake waits on
+  the stream's own timeout, which bounds each wait for the server's next bytes, not the handshake, so a server sending
+  them a few at a time kept the opening going past the deadline. With an opening deadline, implicit TLS connects over
+  TCP and runs its handshake non-blocking under what is left of the deadline, and so does STARTTLS's; past it, the
+  opening is a `TimedOut`. Without an opening deadline, both handshakes run as before.
+
+### Changed
+
+- Under a deadline the reader owns the stream's timeout: it sets the timeout for each wait a deadline cuts and puts
+  the configured read timeout back after. A caller bounds an operation of its own with `Client::within()`, not by
+  setting the stream's timeout.
+
 ## 0.1.0-alpha.10
 
 ### Added
